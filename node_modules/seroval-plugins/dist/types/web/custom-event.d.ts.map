@@ -1,0 +1,1 @@
+{"version":3,"file":"custom-event.d.ts","sourceRoot":"","sources":["../../../web/custom-event.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,EAAE,WAAW,EAAE,MAAM,SAAS,CAAC;AAY3C,UAAU,eAAe;IACvB,IAAI,EAAE,WAAW,CAAC;IAClB,OAAO,EAAE,WAAW,CAAC;CACtB;AAED,QAAA,MAAM,iBAAiB,6DA8CrB,CAAC;AAEH,eAAe,iBAAiB,CAAC"}
