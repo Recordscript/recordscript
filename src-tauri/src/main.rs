@@ -45,12 +45,12 @@ fn list_output_devices(host: State<Host>) -> Vec<String> {
 }
 
 #[tauri::command]
-async fn start_audio_recording(host: State<'_, Host>, input_device: State<'_, Mutex<ChosenInputDevice>>, record_command: State<'_, AudioRecordCommand>) -> Result<(), ()> {
-    let ChosenInputDevice(device_nth) = *input_device.lock().unwrap();
+async fn start_audio_recording(host: State<'_, Host>, input_device: State<'_, Mutex<ChosenInputDevice>>, output_device: State<'_, Mutex<ChosenOutputDevice>>, record_command: State<'_, AudioRecordCommand>) -> Result<(), ()> {
+    let ChosenInputDevice(input_device_nth) = *input_device.lock().unwrap();
+    let ChosenOutputDevice(output_device_nth) = *output_device.lock().unwrap();
 
-    record_command.send(RecordCommand::Input(CommandAudioRecord::Start(host.input_devices().unwrap().nth(device_nth).unwrap()))).await.expect("Failed to send start record command");
-
-    // record_command.send(RecordCommand::Output(CommandAudioRecord::Start(host.input_devices().unwrap().nth(device_nth).unwrap()))).await.expect("Failed to send start record command");
+    record_command.send(RecordCommand::Input(CommandAudioRecord::Start(host.input_devices().unwrap().nth(input_device_nth).unwrap()))).await.expect("Failed to send start record command");
+    record_command.send(RecordCommand::Output(CommandAudioRecord::Start(host.output_devices().unwrap().nth(output_device_nth).unwrap()))).await.expect("Failed to send start record command");
 
     Ok(())
 }
@@ -58,7 +58,7 @@ async fn start_audio_recording(host: State<'_, Host>, input_device: State<'_, Mu
 #[tauri::command]
 async fn pause_audio_recording(record_command: State<'_, AudioRecordCommand>) -> Result<(), ()> {
     record_command.send(RecordCommand::Input(CommandAudioRecord::Pause)).await.expect("Failed to send pause record command");
-    // record_command.send(RecordCommand::Output(CommandAudioRecord::Pause)).await.expect("Failed to send pause record command");
+    record_command.send(RecordCommand::Output(CommandAudioRecord::Pause)).await.expect("Failed to send pause record command");
 
     Ok(())
 }
@@ -66,7 +66,7 @@ async fn pause_audio_recording(record_command: State<'_, AudioRecordCommand>) ->
 #[tauri::command]
 async fn resume_audio_recording(record_command: State<'_, AudioRecordCommand>) -> Result<(), ()> {
     record_command.send(RecordCommand::Input(CommandAudioRecord::Resume)).await.expect("Failed to send resume record command");
-    // record_command.send(RecordCommand::Output(CommandAudioRecord::Resume)).await.expect("Failed to send resume record command");
+    record_command.send(RecordCommand::Output(CommandAudioRecord::Resume)).await.expect("Failed to send resume record command");
 
     Ok(())
 }
@@ -74,7 +74,7 @@ async fn resume_audio_recording(record_command: State<'_, AudioRecordCommand>) -
 #[tauri::command]
 async fn stop_audio_recording(record_command: State<'_, AudioRecordCommand>) -> Result<(), ()> {
     record_command.send(RecordCommand::Input(CommandAudioRecord::Stop)).await.expect("Failed to send stop record command");
-    // record_command.send(RecordCommand::Output(CommandAudioRecord::Stop)).await.expect("Failed to send stop record command");
+    record_command.send(RecordCommand::Output(CommandAudioRecord::Stop)).await.expect("Failed to send stop record command");
 
     Ok(())
 }
@@ -172,15 +172,15 @@ fn main() {
         let output_cursor = Arc::new(Mutex::new(Cursor::new(Vec::new())));
         let output_arc_writer = Arc::new(Mutex::new(None));
 
-        let mut input_stream = None;
-        let mut output_stream = None;
+        let mut microphone_stream = None;
+        let mut system_audio_stream = None;
 
         while let Some(command) = record_rx.blocking_recv() {
-            let input_arc_writer = input_arc_writer.clone();
-            let input_cursor = input_cursor.clone();
+            let microphone_arc_record_writer = input_arc_writer.clone();
+            let microphone_record_cursor = input_cursor.clone();
             
-            let output_arc_writer = output_arc_writer.clone();
-            let output_cursor = output_cursor.clone();
+            let system_arc_record_writer = output_arc_writer.clone();
+            let system_record_cursor = output_cursor.clone();
 
             match command {
                 RecordCommand::Input(command) => match command {
@@ -189,52 +189,53 @@ fn main() {
     
                         let spec = wav_spec_from_config(&input_config);
     
-                        *input_cursor.lock().unwrap() = Cursor::new(Vec::new());
+                        *microphone_record_cursor.lock().unwrap() = Cursor::new(Vec::new());
     
-                        let writer = hound::WavWriter::new(WriterHandle(input_cursor.clone()), spec).unwrap();
-                        *input_arc_writer.lock().unwrap() = Some(writer);
+                        let writer = hound::WavWriter::new(WriterHandle(microphone_record_cursor.clone()), spec).unwrap();
+                        *microphone_arc_record_writer.lock().unwrap() = Some(writer);
     
-                        input_stream = Some(match input_config.sample_format() {
+                        microphone_stream = Some(match input_config.sample_format() {
                             cpal::SampleFormat::I8 => device.build_input_stream(
                                 &input_config.into(),
-                                move |input, _: &_| write_input_data::<i8, i8>(input, &input_arc_writer), |err| panic!("{err:?}"), None),
+                                move |input, _: &_| write_input_data::<i8, i8>(input, &microphone_arc_record_writer), |err| panic!("{err:?}"), None),
                             cpal::SampleFormat::I16 => device.build_input_stream(
                                 &input_config.into(),
-                                move |input, _: &_| write_input_data::<i16, i16>(input, &input_arc_writer), |err| panic!("{err:?}"), None),
+                                move |input, _: &_| write_input_data::<i16, i16>(input, &microphone_arc_record_writer), |err| panic!("{err:?}"), None),
                             cpal::SampleFormat::I32 => device.build_input_stream(
                                 &input_config.into(),
-                                move |input, _: &_| write_input_data::<i32, i32>(input, &input_arc_writer), |err| panic!("{err:?}"), None),
+                                move |input, _: &_| write_input_data::<i32, i32>(input, &microphone_arc_record_writer), |err| panic!("{err:?}"), None),
                             cpal::SampleFormat::F32 => device.build_input_stream(
                                 &input_config.into(),
-                                move |input, _: &_| write_input_data::<f32, f32>(input, &input_arc_writer), |err| panic!("{err:?}"), None),
+                                move |input, _: &_| write_input_data::<f32, f32>(input, &microphone_arc_record_writer), |err| panic!("{err:?}"), None),
                             _ => panic!("Unsupported sample format"),
                         }.unwrap());
     
-                        let _ = input_stream.as_ref().map(|v| v.play()).expect("Cannot record audio");
+                        let _ = microphone_stream.as_ref().map(|v| v.play()).expect("Cannot record audio");
                     },
                     CommandAudioRecord::Resume => {
-                        let _ = input_stream.as_ref().map(|v| v.play()).expect("Cannot resume audio");
+                        let _ = microphone_stream.as_ref().map(|v| v.play()).expect("Cannot resume audio");
                     }
                     CommandAudioRecord::Pause => {
-                        let _ = input_stream.as_ref().map(|v| v.pause()).expect("Cannot pause audio");
+                        let _ = microphone_stream.as_ref().map(|v| v.pause()).expect("Cannot pause audio");
                     }
                     CommandAudioRecord::Stop => {
-                        input_stream.take().expect("Record stream is not found");
-                        input_arc_writer.try_lock().unwrap().take().unwrap().finalize().unwrap();
+                        microphone_stream.take().expect("Record stream is not found");
+                        microphone_arc_record_writer.try_lock().unwrap().take().unwrap().finalize().unwrap();
     
                         let mut buffer = Vec::new();
-                        input_cursor.lock().unwrap().rewind().unwrap();
-                        drop(input_cursor.lock().unwrap().read_to_end(&mut buffer));
+                        microphone_record_cursor.lock().unwrap().rewind().unwrap();
+                        drop(microphone_record_cursor.lock().unwrap().read_to_end(&mut buffer));
     
                         dialog::FileDialogBuilder::new()
                             .set_title("Save Microphone Audio")
+                            .add_filter("Microphone", &["wav"])
                             .save_file(|path| {
                                 let Some(path) = path else { return };
     
                                 std::fs::write(path, buffer).expect("Failed writing buffer");
                             });
     
-                        *input_cursor.lock().unwrap() = Cursor::new(Vec::new());
+                        *microphone_record_cursor.lock().unwrap() = Cursor::new(Vec::new());
                     },
                 }
                 RecordCommand::Output(command) => match command {
@@ -243,52 +244,54 @@ fn main() {
     
                         let spec = wav_spec_from_config(&output_config);
     
-                        *output_cursor.lock().unwrap() = Cursor::new(Vec::new());
+                        *system_record_cursor.lock().unwrap() = Cursor::new(Vec::new());
     
-                        let writer = hound::WavWriter::new(WriterHandle(output_cursor.clone()), spec).unwrap();
-                        *output_arc_writer.lock().unwrap() = Some(writer);
+                        let writer = hound::WavWriter::new(WriterHandle(system_record_cursor.clone()), spec).unwrap();
+                        *system_arc_record_writer.lock().unwrap() = Some(writer);
     
-                        output_stream = Some(match output_config.sample_format() {
+                        system_audio_stream = Some(match output_config.sample_format() {
                             cpal::SampleFormat::I8 => device.build_input_stream(
                                 &output_config.into(),
-                                move |input, _: &_| write_input_data::<i8, i8>(input, &output_arc_writer), |err| panic!("{err:?}"), None),
+                                move |input, _: &_| write_input_data::<i8, i8>(input, &system_arc_record_writer), |err| panic!("{err:?}"), None),
                             cpal::SampleFormat::I16 => device.build_input_stream(
                                 &output_config.into(),
-                                move |input, _: &_| write_input_data::<i16, i16>(input, &output_arc_writer), |err| panic!("{err:?}"), None),
+                                move |input, _: &_| write_input_data::<i16, i16>(input, &system_arc_record_writer), |err| panic!("{err:?}"), None),
                             cpal::SampleFormat::I32 => device.build_input_stream(
                                 &output_config.into(),
-                                move |input, _: &_| write_input_data::<i32, i32>(input, &output_arc_writer), |err| panic!("{err:?}"), None),
+                                move |input, _: &_| write_input_data::<i32, i32>(input, &system_arc_record_writer), |err| panic!("{err:?}"), None),
                             cpal::SampleFormat::F32 => device.build_input_stream(
                                 &output_config.into(),
-                                move |input, _: &_| write_input_data::<f32, f32>(input, &output_arc_writer), |err| panic!("{err:?}"), None),
+                                move |input, _: &_| write_input_data::<f32, f32>(input, &system_arc_record_writer), |err| panic!("{err:?}"), None),
                             _ => panic!("Unsupported sample format"),
                         }.unwrap());
     
-                        let _ = output_stream.as_ref().map(|v| v.play()).expect("Cannot record audio");
+                        let _ = system_audio_stream.as_ref().map(|v| v.play()).expect("Cannot record audio");
                     },
                     CommandAudioRecord::Resume => {
-                        let _ = output_stream.as_ref().map(|v| v.play()).expect("Cannot resume audio");
+                        let _ = system_audio_stream.as_ref().map(|v| v.play()).expect("Cannot resume audio");
                     }
                     CommandAudioRecord::Pause => {
-                        let _ = output_stream.as_ref().map(|v| v.pause()).expect("Cannot pause audio");
+                        let _ = system_audio_stream.as_ref().map(|v| v.pause()).expect("Cannot pause audio");
                     }
                     CommandAudioRecord::Stop => {
-                        output_stream.take().expect("Record stream is not found");
-                        output_arc_writer.lock().unwrap().take().unwrap().finalize().unwrap();
+                        dbg!("output");
+                        system_audio_stream.take().expect("Record stream is not found");
+                        system_arc_record_writer.lock().unwrap().take().unwrap().finalize().unwrap();
     
                         let mut buffer = Vec::new();
-                        output_cursor.lock().unwrap().rewind().unwrap();
-                        drop(output_cursor.lock().unwrap().read_to_end(&mut buffer));
+                        system_record_cursor.lock().unwrap().rewind().unwrap();
+                        drop(system_record_cursor.lock().unwrap().read_to_end(&mut buffer));
     
                         dialog::FileDialogBuilder::new()
                             .set_title("Save System Audio")
+                            .add_filter("System", &["wav"])
                             .save_file(|path| {
                                 let Some(path) = path else { return };
     
                                 std::fs::write(path, buffer).expect("Failed writing buffer");
                             });
     
-                        *output_cursor.lock().unwrap() = Cursor::new(Vec::new());
+                        *system_record_cursor.lock().unwrap() = Cursor::new(Vec::new());
                     },
                 }
             }
