@@ -274,7 +274,6 @@ fn main() {
                         let _ = system_audio_stream.as_ref().map(|v| v.pause()).expect("Cannot pause audio");
                     }
                     CommandAudioRecord::Stop => {
-                        dbg!("output");
                         system_audio_stream.take().expect("Record stream is not found");
                         system_arc_record_writer.lock().unwrap().take().unwrap().finalize().unwrap();
     
