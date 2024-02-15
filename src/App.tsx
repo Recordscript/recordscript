@@ -13,6 +13,9 @@ function App() {
 
   const [recording, setRecording] = createSignal<RecordingState | null>(RecordingState.Stopped);
 
+  const [screenStream, setScreenStream] = createSignal<MediaStream | null>(null);
+  const [screenRecorder, setScreenRecorder] = createSignal<MediaRecorder | null>(null);
+
   async function loadInputDevices() {
     setInputDevices(null);
 
@@ -38,6 +41,8 @@ function App() {
   async function startRecording() {
     setRecording(null);
 
+    await startScreenRecorder();
+    console.log("actually started");
     await invoke("start_audio_recording");
 
     setRecording(RecordingState.Recording);
@@ -46,6 +51,7 @@ function App() {
   async function pauseRecording() {
     setRecording(null);
 
+    screenRecorder()?.pause();
     await invoke("pause_audio_recording");
 
     setRecording(RecordingState.Paused);
@@ -54,6 +60,7 @@ function App() {
   async function resumeRecording() {
     setRecording(null);
 
+    screenRecorder()?.resume();
     await invoke("resume_audio_recording");
 
     setRecording(RecordingState.Recording);
@@ -62,25 +69,47 @@ function App() {
   async function stopRecording() {
     setRecording(null);
 
+    stopScreenRecorder();
     await invoke("stop_audio_recording");
 
     setRecording(RecordingState.Stopped);
   }
 
   async function changeChosenInputDevice(deviceNth: number) {
-    console.log("bruh");
     await invoke("change_chosen_input_device", { deviceNth });
   }
 
   async function changeChosenOutputDevice(deviceNth: number) {
-    console.log("bruh");
     await invoke("change_chosen_output_device", { deviceNth });
+  }
+
+  async function startScreenRecorder() {
+    const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+    setScreenStream(stream);
+
+    const recorder = new MediaRecorder(stream);
+    setScreenRecorder(recorder);
+
+    recorder.start();
+
+    recorder.ondataavailable = async (e) => {
+      const buffer = Array.from(new Uint8Array(await e.data.arrayBuffer()));
+
+      await invoke("send_screen_buffer", { buffer });
+    }
+  }
+
+  function stopScreenRecorder() {
+    screenStream()?.getTracks().forEach((v) => v.stop());
+
+    setScreenStream(null);
+    setScreenRecorder(null);
   }
 
   return (
     <main class="w-screen p-2 flex gap-1 flex-col">
       <div class="flex gap-1">
-        <label class="font-bold w-32" for="input-devices">Input device</label>
+        <label class="font-bold w-32" for="input-devices">Microphone</label>
         <select class="border p-1 text-xs w-full" id="input-devices" disabled={inputDevices() === null} onchange={(e) => changeChosenInputDevice(parseInt(e.target.value) || 0)}>
           <Show
             when={inputDevices() !== null}
@@ -93,7 +122,7 @@ function App() {
         </select>
       </div>
       <div class="flex gap-1">
-        <label class="font-bold w-32" for="output-devices">Output device</label>
+        <label class="font-bold w-32" for="output-devices">System sound</label>
         <select class="border p-1 text-xs w-full" id="output-devices" disabled={outputDevices() === null} onchange={(e) => changeChosenOutputDevice(parseInt(e.target.value) || 0)}>
           <Show
             when={outputDevices() !== null}
@@ -121,6 +150,7 @@ function App() {
             <button class="border py-2 cursor-pointer w-full" onclick={stopRecording}>Stop</button>
           </Match>
         </Switch>
+        {/* <button class="border py-2 cursor-pointer w-full" onclick={startScreenRecording}>Bruh</button> */}
       </div>
     </main>
   );

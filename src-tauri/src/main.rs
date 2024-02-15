@@ -4,7 +4,7 @@
 use std::{io::{self, Cursor, Read, Seek}, process, sync::{Arc, Mutex}, thread};
 
 use cpal::{traits::{DeviceTrait, HostTrait, StreamTrait}, Device, FromSample, Host, Sample};
-use tauri::{api::dialog, async_runtime::{channel, Sender}, Manager, State};
+use tauri::{api::dialog, async_runtime::{channel, Sender}, http::Response, Manager, State};
 struct ChosenInputDevice(usize);
 struct ChosenOutputDevice(usize);
 
@@ -89,6 +89,18 @@ fn change_chosen_input_device(chosen_input: State<Mutex<ChosenInputDevice>>, dev
 fn change_chosen_output_device(chosen_output: State<Mutex<ChosenOutputDevice>>, device_nth: usize) {
     println!("Changed output device to {device_nth}");
     *chosen_output.lock().unwrap() = ChosenOutputDevice(device_nth);
+}
+
+#[tauri::command]
+fn send_screen_buffer(buffer: Vec<u8>) {
+    dialog::FileDialogBuilder::new()
+        .set_title("Save Screen Recording")
+        .add_filter("Video", &["webm"])
+        .save_file(|path| {
+            let Some(path) = path else { return };
+
+            std::fs::write(path, buffer).expect("Failed writing buffer");
+        });
 }
 
 fn sample_format(format: cpal::SampleFormat) -> hound::SampleFormat {
@@ -304,7 +316,7 @@ fn main() {
         .manage(Mutex::new(ChosenOutputDevice(0)))
         .manage(record_tx)
         .manage(host)
-        .invoke_handler(tauri::generate_handler![list_input_devices, list_output_devices, start_audio_recording, pause_audio_recording, resume_audio_recording, stop_audio_recording, change_chosen_input_device, change_chosen_output_device])
+        .invoke_handler(tauri::generate_handler![list_input_devices, list_output_devices, start_audio_recording, pause_audio_recording, resume_audio_recording, stop_audio_recording, change_chosen_input_device, change_chosen_output_device, send_screen_buffer])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
