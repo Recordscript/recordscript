@@ -1,5 +1,6 @@
 import { For, Match, Show, Switch, createSignal } from "solid-js";
 import { invoke } from "@tauri-apps/api/tauri";
+import { message } from "@tauri-apps/api/dialog";
 
 enum RecordingState {
   Recording,
@@ -10,11 +11,17 @@ enum RecordingState {
 function App() {
   const [inputDevices, setInputDevices] = createSignal<string[] | null>(null);
   const [outputDevices, setOutputDevices] = createSignal<string[] | null>(null);
+  const [webcamDevices, setWebcamDevices] = createSignal<MediaDeviceInfo[] | null>(null);
+
+  const [chosenWebcamDevice, choseWebcamDevice] = createSignal<MediaDeviceInfo | null>(null);
 
   const [recording, setRecording] = createSignal<RecordingState | null>(RecordingState.Stopped);
 
   const [screenStream, setScreenStream] = createSignal<MediaStream | null>(null);
+  const [webcamStream, setWebcamStream] = createSignal<MediaStream | null>(null);
+
   const [screenRecorder, setScreenRecorder] = createSignal<MediaRecorder | null>(null);
+  const [webcamRecorder, setWebcamRecorder] = createSignal<MediaRecorder | null>(null);
 
   async function loadInputDevices() {
     setInputDevices(null);
@@ -32,17 +39,26 @@ function App() {
     setOutputDevices(devices);
   }
 
-  function reloadAudioDevices() {
+  async function listWebcamDevices() {
+    setWebcamDevices(null);
+
+    const devices = await navigator.mediaDevices.enumerateDevices();
+
+    setWebcamDevices(devices.filter((v) => v.kind === "videoinput"));
+  }
+
+  function reloadDevices() {
     loadInputDevices();
     loadOutputDevices();
+    listWebcamDevices();
   }
-  reloadAudioDevices();
+  reloadDevices();
 
   async function startRecording() {
     setRecording(null);
 
     await startScreenRecorder();
-    console.log("actually started");
+    
     await invoke("start_audio_recording");
 
     setRecording(RecordingState.Recording);
@@ -52,6 +68,8 @@ function App() {
     setRecording(null);
 
     screenRecorder()?.pause();
+    webcamRecorder()?.pause();
+
     await invoke("pause_audio_recording");
 
     setRecording(RecordingState.Paused);
@@ -61,6 +79,8 @@ function App() {
     setRecording(null);
 
     screenRecorder()?.resume();
+    webcamRecorder()?.resume();
+
     await invoke("resume_audio_recording");
 
     setRecording(RecordingState.Recording);
@@ -70,6 +90,7 @@ function App() {
     setRecording(null);
 
     stopScreenRecorder();
+    
     await invoke("stop_audio_recording");
 
     setRecording(RecordingState.Stopped);
@@ -84,26 +105,62 @@ function App() {
   }
 
   async function startScreenRecorder() {
-    const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
-    setScreenStream(stream);
+    let screen_stream = null;
+    let webcam_stream = null;
 
-    const recorder = new MediaRecorder(stream);
-    setScreenRecorder(recorder);
+    try {
+      screen_stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+    } catch {
+      message("Couldn't record your screen, please try choosing different screen or window", { title: "Couldn't record your screen", type: "error" });
+    }
 
-    recorder.start();
+    try {
+      webcam_stream = await navigator.mediaDevices.getUserMedia({ video: { deviceId: chosenWebcamDevice()?.deviceId }, audio: false });
+    } catch {
+      message("Couldn't record your camera, please try choosing different camera device", { title: "Couldn't record your camera", type: "error" });
+    }
 
-    recorder.ondataavailable = async (e) => {
-      const buffer = Array.from(new Uint8Array(await e.data.arrayBuffer()));
+    setScreenStream(screen_stream);
+    setWebcamStream(webcam_stream);
 
-      await invoke("send_screen_buffer", { buffer });
+    if (screen_stream !== null) {
+      const screen_recorder = new MediaRecorder(screen_stream);
+
+      setScreenRecorder(screen_recorder);
+    
+      screen_recorder.start();
+
+      screen_recorder.ondataavailable = async (e) => {
+        const buffer = Array.from(new Uint8Array(await e.data.arrayBuffer()));
+
+        await invoke("send_screen_buffer", { buffer });
+      }
+    }
+
+    if (webcam_stream !== null) {
+      const webcam_recorder = new MediaRecorder(webcam_stream);
+
+      setWebcamRecorder(webcam_recorder);
+
+      webcam_recorder.start();
+
+      webcam_recorder.ondataavailable = async (e) => {
+        const buffer = Array.from(new Uint8Array(await e.data.arrayBuffer()));
+  
+        await invoke("send_webcam_buffer", { buffer });
+      }
     }
   }
 
   function stopScreenRecorder() {
     screenStream()?.getTracks().forEach((v) => v.stop());
+    webcamStream()?.getTracks().forEach((v) => v.stop());
 
     setScreenStream(null);
     setScreenRecorder(null);
+
+    setWebcamStream(null);
+    setWebcamRecorder(null);
   }
 
   return (
@@ -134,7 +191,20 @@ function App() {
           </Show>
         </select>
       </div>
-      <button class="border py-2 cursor-pointer" onclick={reloadAudioDevices}>Reload devices</button>
+      <div class="flex gap-1">
+        <label class="font-bold w-32" for="camera-devices">Camera</label>
+        <select class="border p-1 text-xs w-full" id="camera-devices" disabled={webcamDevices() === null} onchange={(e) => choseWebcamDevice(webcamDevices()?.[parseInt(e.target.value) || 0] ?? null)}>
+          <Show
+            when={webcamDevices() !== null}
+            fallback={<option>Loading camera devices</option>}
+          >
+            <For each={webcamDevices()}>{(device, i) => 
+              <option value={i().toString()}>{device.label}</option>
+            }</For>
+          </Show>
+        </select>
+      </div>
+      <button class="border py-2 cursor-pointer" onclick={reloadDevices}>Reload devices</button>
       <div class="w-full flex gap-1">
         <Switch fallback={
           <button class="border py-2 cursor-pointer w-full" disabled={true}>Loading</button>

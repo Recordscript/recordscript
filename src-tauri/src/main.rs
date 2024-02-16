@@ -103,6 +103,18 @@ fn send_screen_buffer(buffer: Vec<u8>) {
         });
 }
 
+#[tauri::command]
+fn send_webcam_buffer(buffer: Vec<u8>) {
+    dialog::FileDialogBuilder::new()
+        .set_title("Save Camera Recording")
+        .add_filter("Video", &["webm"])
+        .save_file(|path| {
+            let Some(path) = path else { return };
+
+            std::fs::write(path, buffer).expect("Failed writing buffer");
+        });
+}
+
 fn sample_format(format: cpal::SampleFormat) -> hound::SampleFormat {
     if format.is_float() {
         hound::SampleFormat::Float
@@ -316,7 +328,7 @@ fn main() {
         .manage(Mutex::new(ChosenOutputDevice(0)))
         .manage(record_tx)
         .manage(host)
-        .invoke_handler(tauri::generate_handler![list_input_devices, list_output_devices, start_audio_recording, pause_audio_recording, resume_audio_recording, stop_audio_recording, change_chosen_input_device, change_chosen_output_device, send_screen_buffer])
+        .invoke_handler(tauri::generate_handler![list_input_devices, list_output_devices, start_audio_recording, pause_audio_recording, resume_audio_recording, stop_audio_recording, change_chosen_input_device, change_chosen_output_device, send_screen_buffer, send_webcam_buffer])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
