@@ -1,1 +1,0 @@
-{"version":3,"file":"special-reference.d.ts","sourceRoot":"","sources":["../../../src/core/special-reference.ts"],"names":[],"mappings":"AAAA,eAAO,MAAM,QAAQ,IAAK,CAAC;AAE3B,eAAO,MAAM,cAAc,IAAK,CAAC;AAEjC,0BAAkB,gBAAgB;IAChC,WAAW,IAAI;IACf,kBAAkB,IAAI;IACtB,cAAc,IAAI;IAClB,aAAa,IAAI;IACjB,iBAAiB,IAAI;CACtB;AAED,eAAO,MAAM,YAAY,EAAE,MAAM,CAAC,gBAAgB,EAAE,OAAO,CAM1D,CAAC"}

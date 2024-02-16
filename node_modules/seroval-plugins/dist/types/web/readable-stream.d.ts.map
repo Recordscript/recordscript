@@ -1,1 +1,0 @@
-{"version":3,"file":"readable-stream.d.ts","sourceRoot":"","sources":["../../../web/readable-stream.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,EAAE,WAAW,EAAU,MAAM,SAAS,CAAC;AAwEnD,UAAU,kBAAkB;IAC1B,OAAO,EAAE,WAAW,CAAC;IACrB,MAAM,EAAE,WAAW,CAAC;CACrB;AAED,QAAA,MAAM,oBAAoB,mEA2DxB,CAAC;AAEH,eAAe,oBAAoB,CAAC"}

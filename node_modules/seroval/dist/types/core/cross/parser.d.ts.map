@@ -1,1 +1,0 @@
-{"version":3,"file":"parser.d.ts","sourceRoot":"","sources":["../../../../src/core/cross/parser.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,EAAE,wBAAwB,EAAE,MAAM,mBAAmB,CAAC;AAElE,MAAM,MAAM,yBAAyB,GAAG,wBAAwB,CAAC;AAEjE,MAAM,WAAW,mBAAmB;IAClC,OAAO,CAAC,EAAE,MAAM,CAAC;CAClB"}
