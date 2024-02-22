@@ -141,43 +141,84 @@ impl TranscriberModelDir for ProjectDirs {
 
 #[derive(Debug, EnumIter)]
 enum TranscriberModelType {
-    Tiny,
-    Base,
-    Small,
-    Medium,
-    Large,
+    TinyWhisper,
+    TinyEnWhisper,
+    TinyQuantized,
+    TinyEnQuantized,
+    BaseWhisper,
+    BaseEnWhisper,
+    BaseQuantized,
+    BaseEnQuantized,
+    SmallWhisper,
+    SmallEnWhisper,
+    SmallQuantized,
+    SmallEnQuantized,
+    MediumQuantized,
+    MediumEnQuantized,
+    LargeQuantized,
 }
 
+// https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny-q5_1.bin?download=true
 impl TranscriberModelType {
     fn get_name(&self) -> &'static str {
         match self {
-            TranscriberModelType::Tiny => "Poor",
-            TranscriberModelType::Base => "Average",
-            TranscriberModelType::Small => "Better",
-            TranscriberModelType::Medium => "Good",
-            TranscriberModelType::Large => "Best",
+            TranscriberModelType::TinyWhisper => "Tiny (Whisper)",
+            TranscriberModelType::TinyEnWhisper => "Tiny English (Whisper)",
+            TranscriberModelType::TinyQuantized => "Tiny (Quantized)",
+            TranscriberModelType::TinyEnQuantized => "Tiny English (Quantized)",
+            TranscriberModelType::BaseWhisper => "Base (Whisper)",
+            TranscriberModelType::BaseEnWhisper => "Base English (Whisper)",
+            TranscriberModelType::BaseQuantized => "Base (Quantized)",
+            TranscriberModelType::BaseEnQuantized => "Base English (Quantized)",
+            TranscriberModelType::SmallWhisper => "Small (Whisper)",
+            TranscriberModelType::SmallEnWhisper => "Small English (Whisper)",
+            TranscriberModelType::SmallQuantized => "Small (Quantized)",
+            TranscriberModelType::SmallEnQuantized => "Small English (Quantized)",
+            TranscriberModelType::MediumQuantized => "Medium (Quantized)",
+            TranscriberModelType::MediumEnQuantized => "Medium English (Quantized)",
+            TranscriberModelType::LargeQuantized => "Large (Quantized)",
         }
     }
 
     /// Use [`TranscriberModelType::get_model_file_name`] as the file name when saving to file system
     fn get_model_url(&self) -> &'static str {
         match self {
-            TranscriberModelType::Tiny => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny-q5_1.bin?download=true",
-            TranscriberModelType::Base => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base-q5_1.bin?download=true",
-            TranscriberModelType::Small => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small-q5_1.bin?download=true",
-            TranscriberModelType::Medium => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium-q5_0.bin?download=true",
-            TranscriberModelType::Large => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v2-q5_0.bin?download=true",
+            TranscriberModelType::TinyWhisper => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin?download=true",
+            TranscriberModelType::TinyEnWhisper => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin?download=true",
+            TranscriberModelType::TinyQuantized => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny-q5_1.bin?download=true",
+            TranscriberModelType::TinyEnQuantized => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en-q5_1.bin?download=true",
+            TranscriberModelType::BaseWhisper => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin?download=true",
+            TranscriberModelType::BaseEnWhisper => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin?download=true",
+            TranscriberModelType::BaseQuantized => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base-q5_1.bin?download=true",
+            TranscriberModelType::BaseEnQuantized => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en-q5_1.bin?download=true",
+            TranscriberModelType::SmallWhisper => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin?download=true",
+            TranscriberModelType::SmallEnWhisper => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en.bin?download=true",
+            TranscriberModelType::SmallQuantized => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small-q5_1.bin?download=true",
+            TranscriberModelType::SmallEnQuantized => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en-q5_1.bin?download=true",
+            TranscriberModelType::MediumQuantized => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium-q5_0.bin?download=true",
+            TranscriberModelType::MediumEnQuantized => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.en-q5_0.bin?download=true",
+            TranscriberModelType::LargeQuantized => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-q5_0.bin?download=true",
         }
     }
 
     /// Use this file name when saving to file system
     fn get_model_file_name(&self) -> &'static str {
         match self {
-            TranscriberModelType::Tiny => "tiny.bin",
-            TranscriberModelType::Base => "base.bin",
-            TranscriberModelType::Small => "small.bin",
-            TranscriberModelType::Medium => "medium.bin",
-            TranscriberModelType::Large => "large-v2.bin",
+            TranscriberModelType::TinyWhisper => "tiny.bin",
+            TranscriberModelType::TinyEnWhisper => "tiny-en.bin",
+            TranscriberModelType::TinyQuantized => "tiny-q.bin",
+            TranscriberModelType::TinyEnQuantized => "tiny-en-q.bin",
+            TranscriberModelType::BaseWhisper => "base.bin",
+            TranscriberModelType::BaseEnWhisper => "base-en.bin",
+            TranscriberModelType::BaseQuantized => "base-q.bin",
+            TranscriberModelType::BaseEnQuantized => "base-en-q.bin",
+            TranscriberModelType::SmallWhisper => "small.bin",
+            TranscriberModelType::SmallEnWhisper => "small-en.bin",
+            TranscriberModelType::SmallQuantized => "small-q.bin",
+            TranscriberModelType::SmallEnQuantized => "small-en-q.bin",
+            TranscriberModelType::MediumQuantized => "medium-q.bin",
+            TranscriberModelType::MediumEnQuantized => "medium-en.bin",
+            TranscriberModelType::LargeQuantized => "large-q.bin",
         }
     }
 
@@ -186,11 +227,21 @@ impl TranscriberModelType {
     /// Refer to this: https://huggingface.co/ggerganov/whisper.cpp
     fn get_avg_mem_usage(&self) -> usize {
         match self {
-            TranscriberModelType::Tiny => 390,
-            TranscriberModelType::Base => 500,
-            TranscriberModelType::Small => 1000,
-            TranscriberModelType::Medium => 2600,
-            TranscriberModelType::Large => 4700,
+            TranscriberModelType::TinyWhisper => 390,
+            TranscriberModelType::TinyEnWhisper => 390,
+            TranscriberModelType::TinyQuantized => 390,
+            TranscriberModelType::TinyEnQuantized => 390,
+            TranscriberModelType::BaseWhisper => 500,
+            TranscriberModelType::BaseEnWhisper => 500,
+            TranscriberModelType::BaseQuantized => 500,
+            TranscriberModelType::BaseEnQuantized => 500,
+            TranscriberModelType::SmallWhisper => 1000,
+            TranscriberModelType::SmallEnWhisper => 1000,
+            TranscriberModelType::SmallQuantized => 1000,
+            TranscriberModelType::SmallEnQuantized => 1000,
+            TranscriberModelType::MediumQuantized => 2600,
+            TranscriberModelType::MediumEnQuantized => 2600,
+            TranscriberModelType::LargeQuantized => 4700,
         }
     }
 
@@ -201,11 +252,21 @@ impl TranscriberModelType {
     /// Refer to this: https://huggingface.co/ggerganov/whisper.cpp
     fn get_disk_usage(&self) -> usize {
         match self {
-            TranscriberModelType::Tiny => 75,
-            TranscriberModelType::Base => 142,
-            TranscriberModelType::Small => 466,
-            TranscriberModelType::Medium => 1500,
-            TranscriberModelType::Large => 2900,
+            TranscriberModelType::TinyWhisper => 75,
+            TranscriberModelType::TinyEnWhisper => 75,
+            TranscriberModelType::TinyQuantized => 75,
+            TranscriberModelType::TinyEnQuantized => 75,
+            TranscriberModelType::BaseWhisper => 142,
+            TranscriberModelType::BaseEnWhisper => 142,
+            TranscriberModelType::BaseQuantized => 142,
+            TranscriberModelType::BaseEnQuantized => 142,
+            TranscriberModelType::SmallWhisper => 466,
+            TranscriberModelType::SmallEnWhisper => 466,
+            TranscriberModelType::SmallQuantized => 466,
+            TranscriberModelType::SmallEnQuantized => 466,
+            TranscriberModelType::MediumQuantized => 1500,
+            TranscriberModelType::MediumEnQuantized => 1500,
+            TranscriberModelType::LargeQuantized => 2900,
         }
     }
 
@@ -439,7 +500,7 @@ impl Transcriber {
 
     fn change_model(&mut self, model: TranscriberModelType) {
         self.model = model;
-        
+
         // Take and drop the old context
         let _ = self.ctx.lock().unwrap().take();
     }
@@ -549,7 +610,7 @@ fn main() {
     // let (active_model_tx, mut active_model_rx): (TranscriberModelChangeCommand, _) = channel(128);
     let (record_tx, mut record_rx): (AudioRecordCommand, _) = channel(128);
 
-    let transcriber = Transcriber::new(TranscriberModelType::Tiny);
+    let transcriber = Transcriber::new(TranscriberModelType::TinyQuantized);
     
     let host = cpal::default_host();
     
