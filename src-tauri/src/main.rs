@@ -271,14 +271,12 @@ fn download_model(window: Window, model_index: usize) -> String {
 }
 
 #[tauri::command]
-async fn switch_model(select_model: State<'_, TranscriberModelChangeCommand>, model_index: usize) -> Result<(), ()> {
+fn switch_model(transcriber: State<'_, Mutex<Transcriber>>, model_index: usize) {
     println!("Switching model to {model_index}");
 
     let model = TranscriberModelType::iter().nth(model_index).unwrap();
 
-    select_model.send(model).await.unwrap();
-
-    Ok(())
+    transcriber.lock().unwrap().change_model(model);
 }
 
 #[tauri::command]
@@ -292,6 +290,12 @@ fn load_model_list() -> Vec<serde_json::Value> {
                 "is_downloaded": model.is_downloaded(),
             })
         ).collect()
+}
+
+#[tauri::command]
+fn transcribe(window: Window, transcriber: State<'_, Mutex<Transcriber>>, buffer: Vec<u8>) {
+    println!("Received transcribe command");
+    transcriber.lock().unwrap().transcribe(&window, &buffer);
 }
 
 fn sample_format(format: cpal::SampleFormat) -> hound::SampleFormat {
@@ -420,16 +424,14 @@ fn emit_all<S: std::fmt::Debug + serde::Serialize + Clone + Send + 'static>(wind
     window.emit(channel.as_str(), payload).unwrap();
 }
 
-struct Transcriber<'a> {
-    window: &'a Window,
+struct Transcriber {
     model: TranscriberModelType,
     ctx: Arc<Mutex<Option<WhisperContext>>>,
 }
 
-impl<'a> Transcriber<'a> {
-    fn new(window: &'a Window, model: TranscriberModelType) -> Self {
+impl Transcriber {
+    fn new(model: TranscriberModelType) -> Self {
         Self {
-            window,
             model,
             ctx: Default::default(),
         }
@@ -437,9 +439,13 @@ impl<'a> Transcriber<'a> {
 
     fn change_model(&mut self, model: TranscriberModelType) {
         self.model = model;
+        
+        // Take and drop the old context
+        let _ = self.ctx.lock().unwrap().take();
     }
 
-    fn transcribe(&self, audio_buffer: &[u8]) {
+    /// Audio format must be in mono channel and 16khz samplerate
+    fn transcribe(&self, window: &Window, audio_buffer: &[u8]) {
         if !self.model.is_downloaded() {
             panic!("Selected model is not downloaded");
         }
@@ -458,15 +464,11 @@ impl<'a> Transcriber<'a> {
         let source_audio = temp_dir().join(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos().to_string()).with_extension("wav");
         fs::write(&source_audio, audio_buffer).unwrap();
 
-        let resampled_audio = temp_dir().join(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos().to_string()).with_extension("wav");
+        // let resampled_audio = temp_dir().join(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos().to_string()).with_extension("wav");
 
-        normalize(source_audio, resampled_audio.clone(), 0.to_string()).unwrap();
+        // normalize(source_audio, resampled_audio.clone(), 0.to_string()).unwrap();
 
         let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 5 });
-
-        fn prog(window: Window, progress: usize) {
-            
-        };
 
         // FIXME: TRANSCRIBE-PROGRESS find out why this doesn't work.
         // let w = self.window.clone();
@@ -477,18 +479,13 @@ impl<'a> Transcriber<'a> {
         //     }));
         // });
 
-        let w = self.window.clone();
+        let w = window.clone();
         let whisper_context = self.ctx.clone();
         std::thread::spawn(move || {
             let whisper_context = whisper_context.lock().unwrap();
             let mut state = whisper_context.as_ref().unwrap().create_state().unwrap();
 
-            emit_all(&w, "update-state", serde_json::json!({
-                "type": "transcribe-start",
-                "value": "",
-            }));
-
-            let wav = WavReader::new(std::fs::File::open(resampled_audio).unwrap()).unwrap();
+            let wav = WavReader::new(std::fs::File::open(source_audio).unwrap()).unwrap();
             let samples = wav.into_samples::<i16>().map(|v| v.unwrap()).collect::<Vec<i16>>();
 
             state.full(params, &whisper_rs::convert_integer_to_float_audio(&samples)).unwrap();
@@ -549,15 +546,17 @@ fn main() {
             }).run(tauri::generate_context!()).ok();
     }));
 
-    let (active_model_tx, mut active_model_rx): (TranscriberModelChangeCommand, _) = channel(128);
+    // let (active_model_tx, mut active_model_rx): (TranscriberModelChangeCommand, _) = channel(128);
     let (record_tx, mut record_rx): (AudioRecordCommand, _) = channel(128);
+
+    let transcriber = Transcriber::new(TranscriberModelType::Tiny);
     
     let host = cpal::default_host();
     
     tauri::Builder::default()
         .manage(Mutex::new(ChosenInputDevice(0)))
         .manage(Mutex::new(ChosenOutputDevice(0)))
-        .manage(active_model_tx)
+        .manage(Mutex::new(transcriber))
         .manage(record_tx)
         .manage(host)
         .invoke_handler(tauri::generate_handler![
@@ -574,19 +573,13 @@ fn main() {
             load_model_list,
             download_model,
             switch_model,
+            transcribe,
         ])
         .setup(|app| {
             let window = app.get_window("main");
 
             thread::spawn(move || {
                 let window = window.as_ref().unwrap();
-
-                emit_all(&window, "update-state", serde_json::json!({
-                    "type": "transcribe-progress",
-                    "value": format!("{}", 0),
-                }));
-
-                let mut transcriber = Transcriber::new(window, TranscriberModelType::Tiny);
         
                 let input_cursor = Arc::new(Mutex::new(Cursor::new(Vec::new())));
                 let input_arc_writer = Arc::new(Mutex::new(None));
@@ -598,10 +591,6 @@ fn main() {
                 let mut system_audio_stream = None;
         
                 loop {
-                    if let Ok(model) = active_model_rx.try_recv() {
-                        transcriber.change_model(model);
-                    }
-        
                     if let Ok(command) = record_rx.try_recv() {
                         let microphone_arc_record_writer = input_arc_writer.clone();
                         let microphone_record_cursor = input_cursor.clone();
@@ -646,8 +635,6 @@ fn main() {
                                     let _ = microphone_stream.as_ref().map(|v| v.pause()).expect("Cannot pause audio");
                                 }
                                 CommandAudioRecord::Stop => {
-                                    println!("stopped");
-        
                                     microphone_stream.take().expect("Record stream is not found");
                                     microphone_arc_record_writer.try_lock().unwrap().take().unwrap().finalize().unwrap();
                 
@@ -665,8 +652,16 @@ fn main() {
                                     //     });
                 
                                     *microphone_record_cursor.lock().unwrap() = Cursor::new(Vec::new());
+
+                                    let audio_path = temp_dir().join(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos().to_string()).with_extension("wav");
+                                    fs::write(&audio_path, buffer).unwrap();
+
+                                    emit_all(window, "ffmpeg://audio-merger-push", serde_json::json!({
+                                        "path": audio_path.display().to_string(),
+                                        "format": "wav"
+                                    }));
             
-                                    transcriber.transcribe(&buffer);
+                                    // transcriber.transcribe(&buffer);
                                 },
                             }
                             RecordCommand::Output(command) => match command {
@@ -722,8 +717,16 @@ fn main() {
                                     //     });
                 
                                     *system_record_cursor.lock().unwrap() = Cursor::new(Vec::new());
+
+                                    let audio_path = temp_dir().join(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos().to_string()).with_extension("wav");
+                                    fs::write(&audio_path, buffer).unwrap();
+
+                                    emit_all(window, "ffmpeg://audio-merger-push", serde_json::json!({
+                                        "path": audio_path.display().to_string(),
+                                        "format": "wav"
+                                    }));
             
-                                    transcriber.transcribe(&buffer);
+                                    // transcriber.transcribe(&buffer);
                                 },
                             }
                         }

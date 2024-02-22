@@ -11,13 +11,10 @@
   },
   "tauri": {
     "allowlist": {
-      "all": false,
-      "shell": {
-        "all": false,
-        "open": true
-      },
-      "dialog": {
-        "message": true
+      "all": true,
+      "fs": {
+        "readFile": true,
+        "scope": ["**"]
       }
     },
     "windows": [

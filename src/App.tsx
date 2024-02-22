@@ -2,6 +2,10 @@ import { For, Match, Show, Switch, createEffect, createSignal } from "solid-js";
 import { invoke } from "@tauri-apps/api/tauri";
 import { message } from "@tauri-apps/api/dialog";
 import { appWindow } from "@tauri-apps/api/window";
+import { readBinaryFile } from "@tauri-apps/api/fs";
+
+import { FFmpeg } from "@ffmpeg/ffmpeg";
+import { toBlobURL } from '@ffmpeg/util';
 
 enum RecordingState {
   Recording,
@@ -68,6 +72,66 @@ function App() {
   const [transcribeState, setTranscribeState] = createSignal<TranscribeState>(TranscribeState.Stopped);
   // const [transcribeProgress, setTranscribeProgress] = createSignal<number>(0);
 
+  let ffmpeg = new FFmpeg();
+
+  async function loadFFmpeg() {
+    console.log("Loading FFmpeg");
+    await ffmpeg.load({
+      coreURL: await toBlobURL(`/ffmpeg-core.js`, "text/javascript"),
+      wasmURL: await toBlobURL(`/ffmpeg-core.wasm`, "application/wasm"),
+      workerURL: await toBlobURL(`/ffmpeg-core.worker.js`, "text/javascript"),
+    });
+    console.log("FFmpeg loaded");
+  }
+  loadFFmpeg();
+
+  interface MergeAudioPath {
+    path: string;
+    format: string;
+  }
+
+  const [audioPaths, setAudioPaths] = createSignal<MergeAudioPath[]>([]);
+
+  appWindow.listen("ffmpeg://audio-merger-push", async (event) => {
+    const audioFiles = event.payload as MergeAudioPath;
+
+    setAudioPaths((v) => [...v, audioFiles]);
+  });
+
+  createEffect(() => {
+    const audioFiles = audioPaths();
+
+    if (audioFiles.length < 2) return;
+    
+    setTranscribeState(TranscribeState.Transcribing);
+
+    (async() => {
+      let fileArgs = [];
+
+      for (let index = 0; index < audioFiles.length; index++) {
+        const audioFile = audioFiles[index];
+       
+        const buffer = await readBinaryFile(audioFile.path);
+
+        const fileName = `${index}.${audioFile.format}`;
+        
+        try { await ffmpeg.deleteFile(fileName) } catch {};
+        await ffmpeg.writeFile(fileName, buffer);
+  
+        fileArgs.push("-i");
+        fileArgs.push(fileName);
+      }
+  
+      // https://stackoverflow.com/a/14528482
+      // Downmix & Downsample
+      await ffmpeg.exec([...fileArgs, "-filter_complex", `amix=inputs=${audioFiles.length}:duration=longest`, "-ar", "16000", "-ac", "1", "output.wav"]);
+  
+      const buffer = Array.from(await ffmpeg.readFile("output.wav") as Uint8Array);
+
+      await invoke("transcribe", { buffer });
+    })();
+  })
+
   async function loadModels() {
     setModels(null);
 
@@ -79,11 +143,11 @@ function App() {
   loadModels();
 
   createEffect(() => {
-    const model = selectedModel();
-    if (model === null) return;
+    const modelIndex = models()?.indexOf(selectedModel()!);
+    if (!modelIndex) return;
 
     (async() => {
-      await invoke("switch_model", { modelIndex: models()?.indexOf(model) });
+      await invoke("switch_model", { modelIndex });
     })();
   });
 
@@ -92,7 +156,7 @@ function App() {
 
     switch (type) {
       case "transcribe-start": {
-        setTranscribeState(TranscribeState.Transcribing)
+        setTranscribeState(TranscribeState.Transcribing);
       } break;
       // FIXME: look at "FIXME: TRANSCRIBE-PROGRESS" at src-tauri
       // case "transcribe-progress": {
@@ -122,7 +186,7 @@ function App() {
       switch (type) {
         case "error": {
           setModelDownloadState(DownloadState.Error);
-          setSystemLog(event.payload.value);
+          setSystemLog((log) => log + "\n" + event.payload.value);
         } break;
         case "progress": {
           let progress = parseInt(event.payload.value);
@@ -337,7 +401,7 @@ function App() {
       </div>
       <div class="flex flex-col gap-[0.125rem]">
         <span class="text-xs">System log</span>
-        <textarea class="border resize-none" name="" id="" cols="30" rows="10" value={systemLog()}></textarea>
+        <textarea class="border resize-none" name="" id="" cols="30" rows="10" value={systemLog()} disabled></textarea>
       </div>
       <div class="flex flex-col gap-1">
         <Show

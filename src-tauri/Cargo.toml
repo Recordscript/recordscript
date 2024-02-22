@@ -14,7 +14,7 @@ tauri-build = { version = "1.5", features = [] }
 anyhow = "1.0.80"
 cpal = "0.15.2"
 directories = "5.0.1"
-tauri = { version = "1.5", features = [ "dialog-message", "shell-open", "dialog"] }
+tauri = { version = "1.5", features = [ "api-all", "dialog"] }
 ffmpeg-next = "6.1.1"
 reqwest = "0.11.24"
 serde = { version = "1.0", features = ["derive"] }
