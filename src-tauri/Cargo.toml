@@ -11,11 +11,19 @@ edition = "2021"
 tauri-build = { version = "1.5", features = [] }
 
 [dependencies]
+anyhow = "1.0.80"
 cpal = "0.15.2"
+directories = "5.0.1"
 tauri = { version = "1.5", features = [ "dialog-message", "shell-open", "dialog"] }
+ffmpeg-next = "6.1.1"
+reqwest = "0.11.24"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+strum = "0.26"
+strum_macros = "0.26"
 hound = "3.5.1"
+whisper-rs = { git = "https://github.com/tazz4843/whisper-rs", rev = "9861dfd" }
+memory-stats = "1.0.0"
 
 [features]
 # this feature is used for production builds or when `devPath` points to the filesystem
