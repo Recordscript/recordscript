@@ -14,6 +14,7 @@
   "dependencies": {
     "@ffmpeg/ffmpeg": "^0.12.10",
     "@ffmpeg/util": "^0.12.1",
+    "@solid-primitives/map": "^0.4.9",
     "@tauri-apps/api": "^1.5.2",
     "solid-js": "^1.7.8"
   },

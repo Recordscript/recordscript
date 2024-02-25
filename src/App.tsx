@@ -1,4 +1,4 @@
-import { For, Match, Show, Switch, createEffect, createSignal } from "solid-js";
+import { For, Match, Show, Switch, createEffect, createSignal, untrack } from "solid-js";
 import { invoke } from "@tauri-apps/api/tauri";
 import { message } from "@tauri-apps/api/dialog";
 import { appWindow } from "@tauri-apps/api/window";
@@ -6,6 +6,7 @@ import { readBinaryFile } from "@tauri-apps/api/fs";
 
 import { FFmpeg } from "@ffmpeg/ffmpeg";
 import { toBlobURL } from '@ffmpeg/util';
+import { ReactiveMap } from "@solid-primitives/map";
 
 enum RecordingState {
   Recording,
@@ -22,6 +23,12 @@ enum DownloadState {
 enum TranscribeState {
   Transcribing,
   Stopped,
+}
+
+enum FFmpegDownloadState {
+  Stopped,
+  Downloading,
+  Extracting,
 }
 
 // enum AppState {
@@ -44,9 +51,20 @@ interface EventResult {
   value: any;
 }
 
+interface DeviceResult {
+  name: string;
+  is_selected: boolean;
+}
+
 function App() {
   // const [appState, setAppState] = createSignal<AppState>(AppState.Nothing);
+  const [deviceTypes, setDeviceTypes] = createSignal<string[] | null>(null);
   
+  // const [devices, setDevices] = createSignal<Map<string, DeviceResult[] | undefined>>(new Map());
+  // const [selectedDevice, selectDevice] = createSignal<Map<string, number | undefined>>(new Map());
+  const devices = new ReactiveMap<string, DeviceResult[] | undefined>();
+  const selectedDevice = new ReactiveMap<string, number | undefined>();
+
   const [inputDevices, setInputDevices] = createSignal<string[] | null>(null);
   const [outputDevices, setOutputDevices] = createSignal<string[] | null>(null);
   const [webcamDevices, setWebcamDevices] = createSignal<MediaDeviceInfo[] | null>(null);
@@ -57,9 +75,12 @@ function App() {
 
   const [screenStream, setScreenStream] = createSignal<MediaStream | null>(null);
   const [webcamStream, setWebcamStream] = createSignal<MediaStream | null>(null);
-
+  
   const [screenRecorder, setScreenRecorder] = createSignal<MediaRecorder | null>(null);
   const [webcamRecorder, setWebcamRecorder] = createSignal<MediaRecorder | null>(null);
+
+  const [screenBuffer, setScreenBuffer] = createSignal<Uint8Array>(new Uint8Array());
+  const [audioBuffer, setAudioBuffer] = createSignal<Uint8Array>(new Uint8Array());
 
   const [models, setModels] = createSignal<Model[] | null>(null);
   const [selectedModel, selectModel] = createSignal<Model | null>(null);
@@ -67,12 +88,40 @@ function App() {
   const [modelDownloadState, setModelDownloadState] = createSignal<DownloadState>(DownloadState.Stopped);
   const [modelDownloadProgress, setModelDownloadProgress] = createSignal<number>(0);
   
+  const [ffmpegDownloadState, setFFmpegDownloadState] = createSignal<FFmpegDownloadState>(FFmpegDownloadState.Stopped);
+  const [ffmpegDownloadProgress, setFFmpegDownloadProgress] = createSignal<number>(0);
+
   const [systemLog, setSystemLog] = createSignal<string>("");
 
   const [transcribeState, setTranscribeState] = createSignal<TranscribeState>(TranscribeState.Stopped);
   // const [transcribeProgress, setTranscribeProgress] = createSignal<number>(0);
 
+  appWindow.listen<EventResult>("ffmpeg://download", (event) => {
+    let type = event.payload.type;
+
+    switch (type) {
+      case "start": {
+        setFFmpegDownloadState(FFmpegDownloadState.Downloading);
+      } break;
+      case "progress": {
+        let progress = parseInt(event.payload.value);
+
+        setFFmpegDownloadProgress(progress);
+      } break;
+      case "extracting": {
+        setFFmpegDownloadState(FFmpegDownloadState.Extracting);
+      } break;
+      case "stop": {
+        setFFmpegDownloadState(FFmpegDownloadState.Stopped);
+      } break;
+    }
+  });
+
   let ffmpeg = new FFmpeg();
+
+  ffmpeg.on("log", (event) => {
+    setSystemLog((l) => l + "\n" + event.message);
+  });
 
   async function loadFFmpeg() {
     console.log("Loading FFmpeg");
@@ -85,27 +134,71 @@ function App() {
   }
   loadFFmpeg();
 
-  interface MergeAudioPath {
+  interface FileReference {
     path: string;
     format: string;
   }
 
-  const [audioPaths, setAudioPaths] = createSignal<MergeAudioPath[]>([]);
+  const [audioPaths, setAudioPaths] = createSignal<FileReference[]>([]);
 
   appWindow.listen("ffmpeg://audio-merger-push", async (event) => {
-    const audioFiles = event.payload as MergeAudioPath;
+    const audioFiles = event.payload as FileReference;
 
     setAudioPaths((v) => [...v, audioFiles]);
   });
 
+  async function mergeSaveAudioVideo() {
+    const now = Date.now();
+
+    const fBuffer = audioBuffer();
+    const sBuffer = screenBuffer();
+
+    console.log({ fBuffer: fBuffer.length, sBuffer: sBuffer.length });
+
+    const audioFileName = `${now}.wav`;
+    const videoFileName = `${now}.webm`;
+
+    try {
+      await ffmpeg.deleteFile(audioFileName);
+      await ffmpeg.deleteFile(videoFileName);
+    } catch { };
+
+    console.log({ fBuffer: fBuffer.length, sBuffer: sBuffer.length });
+
+    console.log(await ffmpeg.writeFile(audioFileName, fBuffer));
+    await ffmpeg.writeFile(videoFileName, sBuffer);
+
+    console.log({ fBuffer: fBuffer.length, sBuffer: sBuffer.length });
+
+    console.log("STARTING!!!");
+    // https://superuser.com/a/277667
+    // Merge audio & video
+    console.log(await ffmpeg.exec(["-i", audioFileName, "-i", videoFileName, "output.mp4"]));
+
+    console.log("DONE!!!");
+
+    const pBuffer = await ffmpeg.readFile("output.mp4") as Uint8Array;
+
+    const buffer = Array.from(pBuffer);
+
+    console.log({ fBuffer: fBuffer.length, sBuffer: sBuffer.length, buffer: buffer.length, pBuffer: pBuffer.length });
+
+    console.log(buffer.length);
+
+    try { await ffmpeg.deleteFile("output.mp4") } catch {};
+
+    await invoke("save_video", { buffer, format: ["mp4"] });
+  }
+
   createEffect(() => {
     const audioFiles = audioPaths();
 
-    if (audioFiles.length < 2) return;
+    if (audioFiles.length === 0 || audioFiles.length < (deviceTypes()?.length || 0)) return;
     
     setTranscribeState(TranscribeState.Transcribing);
+    setAudioBuffer(new Uint8Array());
 
-    (async() => {
+    (async () => {
       let fileArgs = [];
 
       for (let index = 0; index < audioFiles.length; index++) {
@@ -114,9 +207,13 @@ function App() {
         const buffer = await readBinaryFile(audioFile.path);
 
         const fileName = `${index}.${audioFile.format}`;
+
+        console.log({ asd: buffer.length });
         
         try { await ffmpeg.deleteFile(fileName) } catch {};
         await ffmpeg.writeFile(fileName, buffer);
+
+        console.log({ asd: buffer.length });
   
         fileArgs.push("-i");
         fileArgs.push(fileName);
@@ -124,9 +221,19 @@ function App() {
   
       // https://stackoverflow.com/a/14528482
       // Downmix & Downsample
-      await ffmpeg.exec([...fileArgs, "-filter_complex", `amix=inputs=${audioFiles.length}:duration=longest`, "-ar", "16000", "-ac", "1", "output.wav"]);
+      await ffmpeg.exec([...fileArgs, "-filter_complex", `amix=inputs=${audioFiles.length}:duration=longest`, "merged.wav"]);
+
+      await ffmpeg.exec(["-i", "merged.wav", "-ar", "16000", "-ac", "1", "output.wav"])
   
+      const pBuffer = await ffmpeg.readFile("merged.wav") as Uint8Array;
+      setAudioBuffer(pBuffer);
+
       const buffer = Array.from(await ffmpeg.readFile("output.wav") as Uint8Array);
+
+      try {
+        await ffmpeg.deleteFile("merged.wav");
+        await ffmpeg.deleteFile("output.wav");
+      } catch {};
 
       await invoke("transcribe", { buffer });
     })();
@@ -144,9 +251,9 @@ function App() {
 
   createEffect(() => {
     const modelIndex = models()?.indexOf(selectedModel()!);
-    if (!modelIndex) return;
+    if (modelIndex === undefined) return;
 
-    (async() => {
+    (async () => {
       await invoke("switch_model", { modelIndex });
     })();
   });
@@ -166,6 +273,7 @@ function App() {
       // } break;
       case "transcribe-stop": {
         setTranscribeState(TranscribeState.Stopped);
+        mergeSaveAudioVideo();
       } break;
     }
   });
@@ -201,21 +309,34 @@ function App() {
     })
   }
 
-  async function loadInputDevices() {
-    setInputDevices(null);
+  async function loadDeviceTypes() {
+    setDeviceTypes(null);
 
-    const devices = await invoke("list_input_devices") as string[];
+    const deviceTypes = await invoke("list_device_types") as string[];
 
-    setInputDevices(devices);
+    deviceTypes.forEach(async (deviceType, deviceTypeIndex) => {
+      const dvcs = await invoke("list_devices", { deviceTypeIndex }) as DeviceResult[];
+
+      console.log({ dvcs });
+
+      dvcs
+        .forEach((dvcs, deviceIndex) => {
+          if (!dvcs.is_selected) return;
+          console.log(dvcs);
+          console.log(deviceIndex);
+          selectedDevice.set(deviceType, deviceIndex);
+
+          createEffect(() =>
+            invoke("select_device", { deviceTypeIndex, deviceIndex: selectedDevice.get(deviceType) })
+          );
+        });
+
+      devices.set(deviceType, dvcs);
+    });
+
+    setDeviceTypes(deviceTypes);
   }
-
-  async function loadOutputDevices() {
-    setOutputDevices(null);
-
-    const devices = await invoke("list_output_devices") as string[];
-
-    setOutputDevices(devices);
-  }
+  loadDeviceTypes();
 
   async function listWebcamDevices() {
     setWebcamDevices(null);
@@ -226,8 +347,6 @@ function App() {
   }
 
   function reloadDevices() {
-    loadInputDevices();
-    loadOutputDevices();
     listWebcamDevices();
   }
   reloadDevices();
@@ -237,7 +356,7 @@ function App() {
 
     await startScreenRecorder();
     
-    await invoke("start_audio_recording");
+    await invoke("start_device_record");
 
     setRecording(RecordingState.Recording);
   }
@@ -248,7 +367,7 @@ function App() {
     screenRecorder()?.pause();
     webcamRecorder()?.pause();
 
-    await invoke("pause_audio_recording");
+    await invoke("pause_device_record");
 
     setRecording(RecordingState.Paused);
   }
@@ -259,7 +378,7 @@ function App() {
     screenRecorder()?.resume();
     webcamRecorder()?.resume();
 
-    await invoke("resume_audio_recording");
+    await invoke("resume_device_record");
 
     setRecording(RecordingState.Recording);
   }
@@ -269,17 +388,9 @@ function App() {
 
     stopScreenRecorder();
     
-    await invoke("stop_audio_recording");
+    await invoke("stop_device_record");
 
     setRecording(RecordingState.Stopped);
-  }
-
-  async function changeChosenInputDevice(deviceNth: number) {
-    await invoke("change_chosen_input_device", { deviceNth });
-  }
-
-  async function changeChosenOutputDevice(deviceNth: number) {
-    await invoke("change_chosen_output_device", { deviceNth });
   }
 
   async function startScreenRecorder() {
@@ -292,42 +403,44 @@ function App() {
       message("Couldn't record your screen, please try choosing different screen or window", { title: "Couldn't record your screen", type: "error" });
     }
 
-    try {
-      webcam_stream = await navigator.mediaDevices.getUserMedia({ video: { deviceId: selectedWebcamDevice()?.deviceId }, audio: false });
-    } catch {
-      message("Couldn't record your camera, please try choosing different camera device", { title: "Couldn't record your camera", type: "error" });
-    }
+    // try {
+    //   webcam_stream = await navigator.mediaDevices.getUserMedia({ video: { deviceId: selectedWebcamDevice()?.deviceId }, audio: false });
+    // } catch {
+    //   message("Couldn't record your camera, please try choosing different camera device", { title: "Couldn't record your camera", type: "error" });
+    // }
 
     setScreenStream(screen_stream);
-    setWebcamStream(webcam_stream);
+    // setWebcamStream(webcam_stream);
 
     if (screen_stream !== null) {
       const screen_recorder = new MediaRecorder(screen_stream);
 
+      setScreenBuffer(new Uint8Array());
       setScreenRecorder(screen_recorder);
     
       screen_recorder.start();
 
       screen_recorder.ondataavailable = async (e) => {
+        // setScreenBuffer(new Uint8Array(await e.data.arrayBuffer()));
         const buffer = Array.from(new Uint8Array(await e.data.arrayBuffer()));
 
         await invoke("send_screen_buffer", { buffer });
       }
     }
 
-    if (webcam_stream !== null) {
-      const webcam_recorder = new MediaRecorder(webcam_stream);
+    // if (webcam_stream !== null) {
+    //   const webcam_recorder = new MediaRecorder(webcam_stream);
 
-      setWebcamRecorder(webcam_recorder);
+    //   setWebcamRecorder(webcam_recorder);
 
-      webcam_recorder.start();
+    //   webcam_recorder.start();
 
-      webcam_recorder.ondataavailable = async (e) => {
-        const buffer = Array.from(new Uint8Array(await e.data.arrayBuffer()));
+    //   webcam_recorder.ondataavailable = async (e) => {
+    //     const buffer = Array.from(new Uint8Array(await e.data.arrayBuffer()));
   
-        await invoke("send_webcam_buffer", { buffer });
-      }
-    }
+    //     await invoke("send_webcam_buffer", { buffer });
+    //   }
+    // }
   }
 
   function stopScreenRecorder() {
@@ -358,7 +471,22 @@ function App() {
         </select>
       </div>
       <div class="flex flex-col gap-1">
-        <div class="flex gap-1">
+        <For each={deviceTypes()}>{(name) => 
+          <div class="flex gap-1">
+            <label class="font-bold w-32" for={`"${name}-devices"`}>{name}</label>
+            <select class="border p-1 text-xs w-full" id={`"${name}-devices"`} disabled={devices.get(name) === undefined} onchange={(e) => selectedDevice.set(name, parseInt(e.target.value) ?? undefined)}>
+              <Show
+                when={devices.get(name) !== undefined}
+                fallback={<option>Loading {name.toLocaleLowerCase()} devices</option>}
+              >
+                <For each={devices.get(name)}>{(device, i) => 
+                  <option value={i().toString()} selected={device.is_selected}>{device.name}</option>
+                }</For>
+              </Show>
+            </select>
+          </div>
+        }</For>
+        {/* <div class="flex gap-1">
           <label class="font-bold w-32" for="input-devices">Microphone</label>
           <select class="border p-1 text-xs w-full" id="input-devices" disabled={inputDevices() === null} onchange={(e) => changeChosenInputDevice(parseInt(e.target.value) || 0)}>
             <Show
@@ -396,12 +524,12 @@ function App() {
               }</For>
             </Show>
           </select>
-        </div>
+        </div> */}
         <button class="border py-2 cursor-pointer" onclick={reloadDevices}>Reload devices</button>
       </div>
       <div class="flex flex-col gap-[0.125rem]">
         <span class="text-xs">System log</span>
-        <textarea class="border resize-none" name="" id="" cols="30" rows="10" value={systemLog()} disabled></textarea>
+        <textarea class="border resize-none font-mono text-xs" name="" id="" cols="30" rows="10" value={systemLog()} disabled></textarea>
       </div>
       <div class="flex flex-col gap-1">
         <Show
@@ -429,6 +557,12 @@ function App() {
             <Switch fallback={
               <button class="border py-2 cursor-pointer w-full" disabled={true}>Loading</button>
             }>
+              <Match when={[FFmpegDownloadState.Downloading].includes(ffmpegDownloadState())}>
+                <button class="border py-2 cursor-pointer w-full" disabled onclick={downloadModel}>Downloading FFmpeg {ffmpegDownloadProgress()}%</button>
+              </Match>
+              <Match when={[FFmpegDownloadState.Extracting].includes(ffmpegDownloadState())}>
+                <button class="border py-2 cursor-pointer w-full" disabled onclick={downloadModel}>Extracting FFmpeg</button>
+              </Match>
               <Match when={recording() === RecordingState.Stopped}>
                 <Switch
                   fallback={

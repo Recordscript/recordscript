@@ -1,114 +1,145 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::{char::decode_utf16, env::temp_dir, fs, io::{self, Cursor, Read, Seek, Write}, ops::Div, path::PathBuf, process, sync::{Arc, Mutex}, thread, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
+use std::{collections::HashMap, env::temp_dir, fs, io::{self, Cursor, Read, Seek, Write}, ops::Div, path::PathBuf, process::{self, Stdio}, sync::{Arc, Mutex}, thread, time::{Duration, SystemTime, UNIX_EPOCH}};
 
-use anyhow::Context;
 use cpal::{traits::{DeviceTrait, HostTrait, StreamTrait}, Device, FromSample, Host, Sample};
 use directories::ProjectDirs;
 use ffmpeg_next::Rescale;
-use hound::{WavReader, WavSpec, WavWriter};
+use ffmpeg_sidecar::{command::FfmpegCommand, paths::sidecar_dir};
+use hound::WavReader;
 use strum::IntoEnumIterator;
-use strum_macros::EnumIter;
-use tauri::{api::dialog, async_runtime::{channel, Sender}, http::Response, Manager, State, Window};
+use strum_macros::{EnumIter, IntoStaticStr};
+use tauri::{api::dialog, async_runtime::{channel, Sender}, Manager, State, Window};
+use universal_archiver::format::FileFormat;
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
-struct ChosenInputDevice(usize);
-struct ChosenOutputDevice(usize);
+
+#[derive(Debug, Clone, Copy, Eq, Hash, PartialEq, EnumIter, IntoStaticStr)]
+enum DeviceType {
+    Microphone,
+    Speaker,
+}
+
+struct SelectedDevices<D: DeviceTrait + Send + Sync>(HashMap<DeviceType, D>);
+
+trait DeviceEq {
+    fn eq_device(&self, device: &Device) -> bool;
+}
+
+impl DeviceEq for Device {
+    fn eq_device(&self, device: &Device) -> bool {
+        let a = self.name().unwrap_or_default();
+        let b = device.name().unwrap_or_default();
+
+        a.eq(&b)
+    }
+}
+
+trait DeviceClone {
+    fn clone_device(&self, host: &Host) -> Device;
+}
+
+impl DeviceClone for Device {
+    fn clone_device(&self, host: &Host) -> Device {
+        host.devices().expect("Can't get devices")
+            .filter(|d| d.eq_device(self))
+            .last().expect("Can't find the specified device")
+    }
+}
 
 enum RecordCommand {
-    Input(CommandAudioRecord),
-    Output(CommandAudioRecord),
-}
-
-type AudioRecordCommand = Sender<RecordCommand>;
-type TranscriberModelChangeCommand = Sender<TranscriberModelType>;
-
-enum CommandAudioRecord {
-    Start(Device),
+    Start {
+        device_type: DeviceType,
+        device: Device,
+    },
     Pause,
     Resume,
-    Stop,
+    Stop
+}
+
+type RecordChannel = Sender<RecordCommand>;
+
+#[derive(serde::Serialize)]
+struct DeviceResult {
+    name: String,
+    is_selected: bool,
 }
 
 #[tauri::command]
-fn list_input_devices(host: State<Host>) -> Vec<String> {
-    host
-        .input_devices()
-        .unwrap()
-        .map(|v|
-            v.name().unwrap_or(String::from("Unknown device"))
-        )
+fn list_device_types() -> Vec<&'static str> {
+    DeviceType::iter()
+        .map(|d| d.into() )
         .collect()
 }
 
 #[tauri::command]
-fn list_output_devices(host: State<Host>) -> Vec<String> {
-    host
-        .output_devices()
-        .unwrap()
-        .map(|v|
-            v.name().unwrap_or(String::from("Unknown device"))
-        )
+fn list_devices(host: State<Host>, selected_devices: State<Mutex<SelectedDevices<Device>>>, device_type_index: usize) -> Vec<DeviceResult>  {
+    let device_type = DeviceType::iter().nth(device_type_index).expect("Can't find specified device type");
+
+    let selected_devices = selected_devices.lock().unwrap();
+    let selected_device = selected_devices.0.get(&device_type).expect("Can't get the default devices");
+
+    let devices = match device_type {
+        DeviceType::Microphone => host.input_devices(),
+        DeviceType::Speaker => host.output_devices(),
+    }.expect("Can't query device list");
+
+    devices
+        .map(|d| {
+            let name = d.name().unwrap_or(String::from("Unknown device"));
+            dbg!(&selected_device.name());
+            let is_selected = d.eq_device(selected_device);
+
+            DeviceResult { name, is_selected }
+        })
         .collect()
 }
 
 #[tauri::command]
-async fn start_audio_recording(host: State<'_, Host>, input_device: State<'_, Mutex<ChosenInputDevice>>, output_device: State<'_, Mutex<ChosenOutputDevice>>, record_command: State<'_, AudioRecordCommand>) -> Result<(), ()> {
-    let ChosenInputDevice(input_device_nth) = *input_device.lock().unwrap();
-    let ChosenOutputDevice(output_device_nth) = *output_device.lock().unwrap();
+fn select_device(host: State<Host>, selected_devices: State<Mutex<SelectedDevices<Device>>>, device_type_index: usize, device_index: Option<usize>) {
+    let device_type = DeviceType::iter().nth(device_type_index).expect("Can't find specified device type");
 
-    record_command.send(RecordCommand::Input(CommandAudioRecord::Start(host.input_devices().unwrap().nth(input_device_nth).unwrap()))).await.expect("Failed to send start record command");
-    record_command.send(RecordCommand::Output(CommandAudioRecord::Start(host.output_devices().unwrap().nth(output_device_nth).unwrap()))).await.expect("Failed to send start record command");
+    let mut devices = match device_type {
+        DeviceType::Microphone => host.input_devices(),
+        DeviceType::Speaker => host.output_devices(),
+    }.expect("Can't query device list");
 
-    Ok(())
+    let device = devices.nth(device_index.expect("Selected device is invalid")).expect("Can't find specified device type");
+
+    println!("Updating {device_type:?} to {}", device.name().unwrap());
+
+    let mut selected_devices = selected_devices.lock().unwrap();
+    selected_devices.0.insert(device_type, device);
 }
 
 #[tauri::command]
-async fn pause_audio_recording(record_command: State<'_, AudioRecordCommand>) -> Result<(), ()> {
-    record_command.send(RecordCommand::Input(CommandAudioRecord::Pause)).await.expect("Failed to send pause record command");
-    record_command.send(RecordCommand::Output(CommandAudioRecord::Pause)).await.expect("Failed to send pause record command");
+fn start_device_record(host: State<Host>, selected_devices: State<Mutex<SelectedDevices<Device>>>, record_channel: State<RecordChannel>) {
+    for (device_type, device) in &selected_devices.lock().unwrap().0 {
+        let device_type = *device_type;
+        let device = device.clone_device(&host);
 
-    Ok(())
+        record_channel.try_send(RecordCommand::Start { device_type, device }).expect("Can't start recording");
+    }
 }
 
 #[tauri::command]
-async fn resume_audio_recording(record_command: State<'_, AudioRecordCommand>) -> Result<(), ()> {
-    record_command.send(RecordCommand::Input(CommandAudioRecord::Resume)).await.expect("Failed to send resume record command");
-    record_command.send(RecordCommand::Output(CommandAudioRecord::Resume)).await.expect("Failed to send resume record command");
-
-    Ok(())
+fn pause_device_record(record_channel: State<RecordChannel>) {
+    record_channel.try_send(RecordCommand::Pause).expect("Can't pause recording");
 }
 
 #[tauri::command]
-async fn stop_audio_recording(record_command: State<'_, AudioRecordCommand>) -> Result<(), ()> {
-    record_command.send(RecordCommand::Input(CommandAudioRecord::Stop)).await.expect("Failed to send stop record command");
-    record_command.send(RecordCommand::Output(CommandAudioRecord::Stop)).await.expect("Failed to send stop record command");
-
-    Ok(())
+fn resume_device_record(record_channel: State<RecordChannel>) {
+    record_channel.try_send(RecordCommand::Resume).expect("Can't resume recording");
 }
 
 #[tauri::command]
-fn change_chosen_input_device(chosen_input: State<Mutex<ChosenInputDevice>>, device_nth: usize) {
-    println!("Changed input device to {device_nth}");
-    *chosen_input.lock().unwrap() = ChosenInputDevice(device_nth);
+fn stop_device_record(record_channel: State<RecordChannel>) {
+    record_channel.try_send(RecordCommand::Stop).expect("Can't stop recording");
 }
 
 #[tauri::command]
-fn change_chosen_output_device(chosen_output: State<Mutex<ChosenOutputDevice>>, device_nth: usize) {
-    println!("Changed output device to {device_nth}");
-    *chosen_output.lock().unwrap() = ChosenOutputDevice(device_nth);
-}
-
-#[tauri::command]
-fn send_screen_buffer(buffer: Vec<u8>) {
-    dialog::FileDialogBuilder::new()
-        .set_title("Save Screen Recording")
-        .add_filter("Video", &["webm"])
-        .save_file(|path| {
-            let Some(path) = path else { return };
-
-            std::fs::write(path, buffer).expect("Failed writing buffer");
-        });
+fn send_screen_buffer(screen_buffer: State<Arc<Mutex<Vec<u8>>>>, buffer: Vec<u8>) {
+    *screen_buffer.lock().unwrap() = buffer;
 }
 
 #[tauri::command]
@@ -332,7 +363,7 @@ fn download_model(window: Window, model_index: usize) -> String {
 }
 
 #[tauri::command]
-fn switch_model(transcriber: State<'_, Mutex<Transcriber>>, model_index: usize) {
+fn switch_model(transcriber: State<'_, Arc<Mutex<Transcriber>>>, model_index: usize) {
     println!("Switching model to {model_index}");
 
     let model = TranscriberModelType::iter().nth(model_index).unwrap();
@@ -354,9 +385,21 @@ fn load_model_list() -> Vec<serde_json::Value> {
 }
 
 #[tauri::command]
-fn transcribe(window: Window, transcriber: State<'_, Mutex<Transcriber>>, buffer: Vec<u8>) {
+fn transcribe(window: Window, transcriber: State<'_, Arc<Mutex<Transcriber>>>, buffer: Vec<u8>) {
     println!("Received transcribe command");
     transcriber.lock().unwrap().transcribe(&window, &buffer);
+}
+
+#[tauri::command]
+fn save_video(window: Window, buffer: Vec<u8>, format: Vec<&str>) {
+    dialog::FileDialogBuilder::new()
+        .set_title("Save Video")
+        .add_filter("Output", &format)
+        .save_file(move |path| {
+            let Some(path) = path else { return };
+
+            std::fs::write(path, buffer).expect("Failed writing buffer");
+        });
 }
 
 fn sample_format(format: cpal::SampleFormat) -> hound::SampleFormat {
@@ -433,48 +476,85 @@ pub fn format_timestamp(seconds: i64, always_include_hours: bool, decimal_marker
     format!("{hours_marker}{minutes:02}:{seconds:02}{decimal_marker}{milliseconds:03}")
 }
 
-mod encoder;
-pub fn normalize(input: std::path::PathBuf, output: std::path::PathBuf, seek: String) -> Result<(), ()> {
-    ffmpeg_next::init().unwrap();
+fn merge_av(inputs: &[(&[u8], &str)]) -> Vec<u8> {
+    let mut ffmpeg = essi_ffmpeg::FFmpeg::new().stderr(Stdio::inherit());
 
-    let filter = "anull";
-    let seek = seek.parse::<i64>().ok();
-
-    dbg!("input is {} and output is {}", input.display(), output.display());
-    let mut ictx = ffmpeg_next::format::input(&input).unwrap();
-    let mut octx = ffmpeg_next::format::output(&output).unwrap();
-    let mut transcoder = encoder::transcoder(&mut ictx, &mut octx, &output, &filter).unwrap();
-
-    if let Some(position) = seek {
-        // If the position was given in seconds, rescale it to ffmpegs base timebase.
-        let position = position.rescale((1, 1), ffmpeg_next::rescale::TIME_BASE);
-        // If this seek was embedded in the transcoding loop, a call of `flush()`
-        // for every opened buffer after the successful seek would be advisable.
-        ictx.seek(position, ..position).unwrap();
+    for &(buffer, format) in inputs {
+        ffmpeg = ffmpeg
+            .input(buffer).unwrap()
+            .format(format)
+            .done();
     }
 
-    octx.set_metadata(ictx.metadata().to_owned());
-    octx.write_header().unwrap();
+    let mut output = None;
 
-    for (stream, mut packet) in ictx.packets() {
-        if stream.index() == transcoder.stream {
-            packet.rescale_ts(stream.time_base(), transcoder.in_time_base);
-            transcoder.send_packet_to_decoder(&packet);
-            transcoder.receive_and_process_decoded_frames(&mut octx);
-        }
+    let ffmpeg = ffmpeg
+        .output(&mut output).unwrap()
+            .codec_audio("copy")
+            .codec_video("copy")
+            .format("matroska")
+            .done();
+
+    let mut ffmpeg = ffmpeg.inspect_args(|args| { dbg!(args); }).start().unwrap();
+    ffmpeg.wait().unwrap();
+
+    let mut output_buffer = Vec::new();
+
+    output.expect("Output is unwritten").read_to_end(&mut output_buffer).unwrap();
+
+    output_buffer
+}
+
+fn merge_audio(inputs: &[&[u8]]) -> Vec<u8> {
+    let mut ffmpeg = essi_ffmpeg::FFmpeg::new().stderr(Stdio::inherit());
+
+    for &buffer in inputs {
+        ffmpeg = ffmpeg
+            .input(buffer).unwrap()
+            .format("wav")
+            .done();
     }
 
-    transcoder.send_eof_to_decoder();
-    transcoder.receive_and_process_decoded_frames(&mut octx);
+    let mut output = None;
 
-    transcoder.flush_filter();
-    transcoder.get_and_process_filtered_frames(&mut octx);
+    let ffmpeg = ffmpeg
+        .args(["-filter_complex", &format!("amix=inputs={}:duration=longest", inputs.len())])
+        .output(&mut output).unwrap()
+            .format("wav")
+            .done();
 
-    transcoder.send_eof_to_encoder();
-    transcoder.receive_and_process_encoded_packets(&mut octx);
+    let mut ffmpeg = ffmpeg.inspect_args(|args| { dbg!(args); }).start().unwrap();
+    ffmpeg.wait().unwrap();
 
-    octx.write_trailer().unwrap();
-    Ok(())
+    let mut output_buffer = Vec::new();
+
+    output.expect("Output is unwritten").read_to_end(&mut output_buffer).unwrap();
+
+    output_buffer
+}
+
+fn resample(buffer: &[u8]) -> Vec<u8> {
+    let mut resampled = None;
+
+    let ffmpeg = essi_ffmpeg::FFmpeg::new()
+        .stderr(Stdio::inherit())
+        .input(buffer).unwrap()
+            .format("wav")
+            .done()
+        .output(&mut resampled).unwrap()
+            .args(["-ar", "16000"])
+            .args(["-ac", "1"])
+            .format("wav")
+            .done();
+
+    let mut ffmpeg = ffmpeg.inspect_args(|args| { dbg!(args); }).start().unwrap();
+    ffmpeg.wait().unwrap();
+
+    let mut resampled_buffer = Vec::new();
+
+    resampled.expect("Output is unwritten").read_to_end(&mut resampled_buffer).unwrap();
+
+    resampled_buffer
 }
 
 fn emit_all<S: std::fmt::Debug + serde::Serialize + Clone + Send + 'static>(window: &Window, channel: impl AsRef<str>, payload: S) {
@@ -523,13 +603,10 @@ impl Transcriber {
         drop(ctx);
 
         let source_audio = temp_dir().join(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos().to_string()).with_extension("wav");
+        dbg!(&source_audio);
         fs::write(&source_audio, audio_buffer).unwrap();
 
-        // let resampled_audio = temp_dir().join(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos().to_string()).with_extension("wav");
-
-        // normalize(source_audio, resampled_audio.clone(), 0.to_string()).unwrap();
-
-        let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 5 });
+        let params = FullParams::new(SamplingStrategy::Greedy { best_of: 5 });
 
         // FIXME: TRANSCRIBE-PROGRESS find out why this doesn't work.
         // let w = self.window.clone();
@@ -607,193 +684,207 @@ fn main() {
             }).run(tauri::generate_context!()).ok();
     }));
 
-    // let (active_model_tx, mut active_model_rx): (TranscriberModelChangeCommand, _) = channel(128);
-    let (record_tx, mut record_rx): (AudioRecordCommand, _) = channel(128);
+    let (record_tx, mut record_rx): (RecordChannel, _) = channel(128);
 
-    let transcriber = Transcriber::new(TranscriberModelType::TinyQuantized);
-    
+    let transcriber = Arc::new(Mutex::new(Transcriber::new(TranscriberModelType::TinyWhisper)));
+    let screen_buffer: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
+
     let host = cpal::default_host();
+
+    let mut selected_devices = SelectedDevices(HashMap::new());
+
+    let default_input = host.default_input_device().unwrap();
+    let default_output = host.default_output_device().unwrap();
+
+    selected_devices.0.insert(DeviceType::Microphone, default_input);
+    selected_devices.0.insert(DeviceType::Speaker, default_output);
     
     tauri::Builder::default()
-        .manage(Mutex::new(ChosenInputDevice(0)))
-        .manage(Mutex::new(ChosenOutputDevice(0)))
-        .manage(Mutex::new(transcriber))
+        .manage(Mutex::new(selected_devices))
+        .manage(transcriber.clone())
+        .manage(screen_buffer.clone())
         .manage(record_tx)
         .manage(host)
         .invoke_handler(tauri::generate_handler![
-            list_input_devices,
-            list_output_devices,
-            start_audio_recording,
-            pause_audio_recording,
-            resume_audio_recording,
-            stop_audio_recording,
-            change_chosen_input_device,
-            change_chosen_output_device,
+            start_device_record,
+            pause_device_record,
+            resume_device_record,
+            stop_device_record,
             send_screen_buffer,
             send_webcam_buffer,
             load_model_list,
             download_model,
             switch_model,
             transcribe,
+            list_device_types,
+            list_devices,
+            select_device,
+            save_video,
         ])
-        .setup(|app| {
-            let window = app.get_window("main");
+        .setup(move |app| {
+            let window = app.get_window("main").expect("Can't get the main window");
 
-            thread::spawn(move || {
-                let window = window.as_ref().unwrap();
-        
-                let input_cursor = Arc::new(Mutex::new(Cursor::new(Vec::new())));
-                let input_arc_writer = Arc::new(Mutex::new(None));
-        
-                let output_cursor = Arc::new(Mutex::new(Cursor::new(Vec::new())));
-                let output_arc_writer = Arc::new(Mutex::new(None));
-        
-                let mut microphone_stream = None;
-                let mut system_audio_stream = None;
-        
-                loop {
-                    if let Ok(command) = record_rx.try_recv() {
-                        let microphone_arc_record_writer = input_arc_writer.clone();
-                        let microphone_record_cursor = input_cursor.clone();
-                        
-                        let system_arc_record_writer = output_arc_writer.clone();
-                        let system_record_cursor = output_cursor.clone();
-            
-                        match command {
-                            RecordCommand::Input(command) => match command {
-                                CommandAudioRecord::Start(device) => {
-                                    let input_config = device.default_input_config().unwrap();
-                
-                                    let spec = wav_spec_from_config(&input_config);
-                
-                                    *microphone_record_cursor.lock().unwrap() = Cursor::new(Vec::new());
-                
-                                    let writer = hound::WavWriter::new(WriterHandle(microphone_record_cursor.clone()), spec).unwrap();
-                                    *microphone_arc_record_writer.lock().unwrap() = Some(writer);
-                
-                                    microphone_stream = Some(match input_config.sample_format() {
-                                        cpal::SampleFormat::I8 => device.build_input_stream(
-                                            &input_config.into(),
-                                            move |input, _: &_| write_input_data::<i8, i8>(input, &microphone_arc_record_writer), |err| panic!("{err:?}"), None),
-                                        cpal::SampleFormat::I16 => device.build_input_stream(
-                                            &input_config.into(),
-                                            move |input, _: &_| write_input_data::<i16, i16>(input, &microphone_arc_record_writer), |err| panic!("{err:?}"), None),
-                                        cpal::SampleFormat::I32 => device.build_input_stream(
-                                            &input_config.into(),
-                                            move |input, _: &_| write_input_data::<i32, i32>(input, &microphone_arc_record_writer), |err| panic!("{err:?}"), None),
-                                        cpal::SampleFormat::F32 => device.build_input_stream(
-                                            &input_config.into(),
-                                            move |input, _: &_| write_input_data::<f32, f32>(input, &microphone_arc_record_writer), |err| panic!("{err:?}"), None),
-                                        _ => panic!("Unsupported sample format"),
-                                    }.unwrap());
-                
-                                    let _ = microphone_stream.as_ref().map(|v| v.play()).expect("Cannot record audio");
-                                },
-                                CommandAudioRecord::Resume => {
-                                    let _ = microphone_stream.as_ref().map(|v| v.play()).expect("Cannot resume audio");
-                                }
-                                CommandAudioRecord::Pause => {
-                                    let _ = microphone_stream.as_ref().map(|v| v.pause()).expect("Cannot pause audio");
-                                }
-                                CommandAudioRecord::Stop => {
-                                    microphone_stream.take().expect("Record stream is not found");
-                                    microphone_arc_record_writer.try_lock().unwrap().take().unwrap().finalize().unwrap();
-                
-                                    let mut buffer = Vec::new();
-                                    microphone_record_cursor.lock().unwrap().rewind().unwrap();
-                                    drop(microphone_record_cursor.lock().unwrap().read_to_end(&mut buffer));
-                
-                                    // dialog::FileDialogBuilder::new()
-                                    //     .set_title("Save Microphone Audio")
-                                    //     .add_filter("Microphone", &["wav"])
-                                    //     .save_file(|path| {
-                                    //         let Some(path) = path else { return };
-                
-                                    //         std::fs::write(path, buffer).expect("Failed writing buffer");
-                                    //     });
-                
-                                    *microphone_record_cursor.lock().unwrap() = Cursor::new(Vec::new());
+            let transcriber = transcriber.clone();
+            let screen_buffer = screen_buffer.clone();
 
-                                    let audio_path = temp_dir().join(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos().to_string()).with_extension("wav");
-                                    fs::write(&audio_path, buffer).unwrap();
+            let w = window.clone();
+            tauri::async_runtime::spawn(async move {
+                if essi_ffmpeg::FFmpeg::get_program().expect("Failed to find FFmpeg").is_some() { return };
 
-                                    emit_all(window, "ffmpeg://audio-merger-push", serde_json::json!({
-                                        "path": audio_path.display().to_string(),
-                                        "format": "wav"
-                                    }));
-            
-                                    // transcriber.transcribe(&buffer);
-                                },
-                            }
-                            RecordCommand::Output(command) => match command {
-                                CommandAudioRecord::Start(device) => {
-                                    let output_config = device.default_output_config().unwrap();
-                
-                                    let spec = wav_spec_from_config(&output_config);
-                
-                                    *system_record_cursor.lock().unwrap() = Cursor::new(Vec::new());
-                
-                                    let writer = hound::WavWriter::new(WriterHandle(system_record_cursor.clone()), spec).unwrap();
-                                    *system_arc_record_writer.lock().unwrap() = Some(writer);
-                
-                                    system_audio_stream = Some(match output_config.sample_format() {
-                                        cpal::SampleFormat::I8 => device.build_input_stream(
-                                            &output_config.into(),
-                                            move |input, _: &_| write_input_data::<i8, i8>(input, &system_arc_record_writer), |err| panic!("{err:?}"), None),
-                                        cpal::SampleFormat::I16 => device.build_input_stream(
-                                            &output_config.into(),
-                                            move |input, _: &_| write_input_data::<i16, i16>(input, &system_arc_record_writer), |err| panic!("{err:?}"), None),
-                                        cpal::SampleFormat::I32 => device.build_input_stream(
-                                            &output_config.into(),
-                                            move |input, _: &_| write_input_data::<i32, i32>(input, &system_arc_record_writer), |err| panic!("{err:?}"), None),
-                                        cpal::SampleFormat::F32 => device.build_input_stream(
-                                            &output_config.into(),
-                                            move |input, _: &_| write_input_data::<f32, f32>(input, &system_arc_record_writer), |err| panic!("{err:?}"), None),
-                                        _ => panic!("Unsupported sample format"),
-                                    }.unwrap());
-                
-                                    let _ = system_audio_stream.as_ref().map(|v| v.play()).expect("Cannot record audio");
-                                },
-                                CommandAudioRecord::Resume => {
-                                    let _ = system_audio_stream.as_ref().map(|v| v.play()).expect("Cannot resume audio");
-                                }
-                                CommandAudioRecord::Pause => {
-                                    let _ = system_audio_stream.as_ref().map(|v| v.pause()).expect("Cannot pause audio");
-                                }
-                                CommandAudioRecord::Stop => {
-                                    system_audio_stream.take().expect("Record stream is not found");
-                                    system_arc_record_writer.lock().unwrap().take().unwrap().finalize().unwrap();
-                
-                                    let mut buffer = Vec::new();
-                                    system_record_cursor.lock().unwrap().rewind().unwrap();
-                                    drop(system_record_cursor.lock().unwrap().read_to_end(&mut buffer));
-                
-                                    // dialog::FileDialogBuilder::new()
-                                    //     .set_title("Save System Audio")
-                                    //     .add_filter("System", &["wav"])
-                                    //     .save_file(|path| {
-                                    //         let Some(path) = path else { return };
-                
-                                    //         std::fs::write(path, buffer).expect("Failed writing buffer");
-                                    //     });
-                
-                                    *system_record_cursor.lock().unwrap() = Cursor::new(Vec::new());
+                let Some((handle, mut progress_state)) = essi_ffmpeg::FFmpeg::auto_download().await.expect("Failed downloading FFmpeg") else { return };
 
-                                    let audio_path = temp_dir().join(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos().to_string()).with_extension("wav");
-                                    fs::write(&audio_path, buffer).unwrap();
-
-                                    emit_all(window, "ffmpeg://audio-merger-push", serde_json::json!({
-                                        "path": audio_path.display().to_string(),
-                                        "format": "wav"
-                                    }));
-            
-                                    // transcriber.transcribe(&buffer);
-                                },
-                            }
+                tauri::async_runtime::spawn(async move {
+                    while let Some(state) = progress_state.recv().await {
+                        match state {
+                            essi_ffmpeg::FFmpegDownloadProgress::Starting => {
+                                w.emit("ffmpeg://download", serde_json::json!({
+                                    "type": "start",
+                                    "value": "",
+                                })).unwrap();
+                            },
+                            essi_ffmpeg::FFmpegDownloadProgress::Downloading(Some(progress)) => {
+                                w.emit("ffmpeg://download", serde_json::json!({
+                                    "type": "progress",
+                                    "value": progress,
+                                })).unwrap();
+                            },
+                            essi_ffmpeg::FFmpegDownloadProgress::Extracting => {
+                                w.emit("ffmpeg://download", serde_json::json!({
+                                    "type": "extracting",
+                                    "value": "",
+                                })).unwrap();
+                            },
+                            essi_ffmpeg::FFmpegDownloadProgress::Finished => {
+                                w.emit("ffmpeg://download", serde_json::json!({
+                                    "type": "stop",
+                                    "value": "",
+                                })).unwrap();
+                            },
+                            _ => { }
                         }
                     }
+                });
+
+                handle.await.unwrap().expect("Failed downloading FFmpeg");
+            });
+
+            let transcriber_arc = transcriber.clone();
+            let screen_buffer_arc = screen_buffer.clone();
+            thread::spawn(move || {
+                let mut recording_cluster = vec![];
         
-                    std::thread::sleep(Duration::from_secs_f32(1.0 / 60.0));
+                loop {
+                    let Some(command) = record_rx.blocking_recv() else { continue };
+        
+                    match command {
+                        RecordCommand::Start { device_type, device } => {
+                            let config = match device_type {
+                                DeviceType::Microphone => device.default_input_config().unwrap(),
+                                DeviceType::Speaker => device.default_output_config().unwrap(),
+                            };
+        
+                            let spec = wav_spec_from_config(&config);
+        
+                            let buffer = Arc::new(Mutex::new(Cursor::new(Vec::new())));
+        
+                            let writer = hound::WavWriter::new(WriterHandle(buffer.clone()), spec).unwrap();
+                            let wav_writer = Arc::new(Mutex::new(Some(writer)));
+        
+                            let writer = wav_writer.clone();
+                            let stream = match config.sample_format() {
+                                cpal::SampleFormat::I8 => device.build_input_stream(
+                                    &config.into(),
+                                    move |input, _: &_| write_input_data::<i8, i8>(input, &writer), |err| panic!("{err:?}"), None),
+                                cpal::SampleFormat::I16 => device.build_input_stream(
+                                    &config.into(),
+                                    move |input, _: &_| write_input_data::<i16, i16>(input, &writer), |err| panic!("{err:?}"), None),
+                                cpal::SampleFormat::I32 => device.build_input_stream(
+                                    &config.into(),
+                                    move |input, _: &_| write_input_data::<i32, i32>(input, &writer), |err| panic!("{err:?}"), None),
+                                cpal::SampleFormat::F32 => device.build_input_stream(
+                                    &config.into(),
+                                    move |input, _: &_| write_input_data::<f32, f32>(input, &writer), |err| panic!("{err:?}"), None),
+                                _ => panic!("Unsupported sample format"),
+                            }.unwrap();
+        
+                            stream.play().expect("Can't play recording stream");
+        
+                            recording_cluster.push((buffer, wav_writer, stream));
+                        },
+                        RecordCommand::Pause => {
+                            for (_, _, stream) in &recording_cluster {
+                                stream.pause().expect("Can't pause recording stream");
+                            }
+                        },
+                        RecordCommand::Resume => {
+                            for (_, _, stream) in &recording_cluster {
+                                stream.play().expect("Can't pause recording stream");
+                            }
+                        },
+                        RecordCommand::Stop => {
+                            let mut files = Vec::new();
+
+                            for (buffer_writer, wav_writer, _) in &mut recording_cluster {
+                                wav_writer.lock()
+                                    .unwrap()
+                                    .take()
+                                    .unwrap()
+                                    .finalize().expect("Can't finalize the recording");
+
+                                let mut buffer_writer = buffer_writer.lock().unwrap();
+        
+                                let mut buffer = Vec::new();
+
+                                buffer_writer.rewind().expect("Can't rewind recording buffer");
+                                buffer_writer.read_to_end(&mut buffer).expect("Can't read recording buffer result");
+
+                                // fs::write(&audio_path, &buffer).expect("Can't write recording result to temp file");
+
+                                files.push(buffer);
+        
+                                // emit_all(&window, "ffmpeg://audio-merger-push", serde_json::json!({
+                                //     "path": audio_path.display().to_string(),
+                                //     "format": "wav"
+                                // }));
+                            }
+
+                            println!("Processing audio");
+
+                            let merged_audio = merge_audio(files.iter().map(|v| v.as_slice()).collect::<Vec<&[u8]>>().as_slice());
+                            let resampled_audio = resample(&merged_audio);
+
+                            println!("Processing video");
+
+                            let screen_buffer = loop {
+                                std::thread::sleep(Duration::from_secs_f32(1.0 / 60.0));
+
+                                let buffer = screen_buffer_arc.lock().unwrap();
+                                if buffer.len() == 0 { continue };
+                                
+                                break buffer;
+                            };
+
+                            dbg!(screen_buffer.len());
+
+                            let video_buffer = merge_av(&[(&merged_audio, "wav"), (&screen_buffer, "webm")]);
+
+                            dialog::FileDialogBuilder::new()
+                                .set_title("Save Video")
+                                .add_filter("Output", &["mp4"])
+                                .save_file(move |path| {
+                                    let Some(path) = path else { return };
+
+                                    std::fs::write(path, video_buffer).expect("Failed writing buffer");
+                                });
+
+                            // let audio_path = temp_dir().join(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos().to_string()).with_extension("wav");
+                            // std::fs::write(audio_path, resampled_audio).unwrap();
+
+                            transcriber_arc.lock().unwrap().transcribe(&window, &resampled_audio);
+        
+                            recording_cluster.clear();
+                        },
+                    }
                 }
             });
 
