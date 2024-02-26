@@ -75,6 +75,8 @@ function App() {
 
   const [screenStream, setScreenStream] = createSignal<MediaStream | null>(null);
   const [webcamStream, setWebcamStream] = createSignal<MediaStream | null>(null);
+
+  const [recordScreen, setRecordScreen] = createSignal<boolean>(true);
   
   const [screenRecorder, setScreenRecorder] = createSignal<MediaRecorder | null>(null);
   const [webcamRecorder, setWebcamRecorder] = createSignal<MediaRecorder | null>(null);
@@ -267,6 +269,8 @@ function App() {
   }
 
   async function startScreenRecorder() {
+    if (!recordScreen()) return;
+
     let screen_stream = null;
     // let webcam_stream = null;
 
@@ -293,10 +297,11 @@ function App() {
       screen_recorder.start();
 
       screen_recorder.ondataavailable = async (e) => {
-        // setScreenBuffer(new Uint8Array(await e.data.arrayBuffer()));
         const buffer = Array.from(new Uint8Array(await e.data.arrayBuffer()));
 
         await invoke("send_screen_buffer", { buffer });
+
+        if (recording() !== RecordingState.Stopped) stopRecording();
       }
     }
 
@@ -398,6 +403,12 @@ function App() {
           </select>
         </div> */}
         {/* <button class="border py-2 cursor-pointer" onclick={reloadDevices}>Reload devices</button> */}
+        <div class="flex gap-2">
+          <div class="flex gap-1">
+            <input checked={recordScreen()} onchange={(e) => setRecordScreen(e.currentTarget.checked)} type="checkbox" id="enable-screen-record" value="Bike"></input>
+            <label class="text-sm" for="enable-screen-record">Record screen</label>
+          </div>
+        </div>
       </div>
       <div class="flex flex-col gap-[0.125rem]">
         <span class="text-xs">System log</span>
