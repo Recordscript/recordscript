@@ -785,6 +785,7 @@ fn main() {
 
             let transcriber_arc = transcriber.clone();
             let screen_buffer_arc = screen_buffer.clone();
+            let w = window.clone();
             thread::spawn(move || {
                 let mut recording_cluster = vec![];
                 let mut recording_duration = Instant::now();
@@ -873,6 +874,11 @@ fn main() {
 
                                 audio_buffers.push((buffer, dbg!(duration)));
                             }
+
+                            emit_all(&w, "update-state", serde_json::json!({
+                                "type": "transcribe-start",
+                                "value": "",
+                            }));
 
                             println!("Processing audio");
 
