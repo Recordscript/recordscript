@@ -7,7 +7,7 @@
   },
   "package": {
     "productName": "screen-audio-recorder-test",
-    "version": "0.0.0"
+    "version": "0.0.1"
   },
   "tauri": {
     "allowlist": {
@@ -35,7 +35,7 @@
     "bundle": {
       "active": true,
       "targets": "all",
-      "identifier": "com.tauri.dev",
+      "identifier": "ai.firstsupport.transcriber",
       "icon": [
         "icons/32x32.png",
         "icons/128x128.png",
@@ -43,6 +43,18 @@
         "icons/icon.icns",
         "icons/icon.ico"
       ]
+    },
+    "updater": {
+      "active": true,
+      "dialog": true,
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDU4MkJFOTNBQ0I4RTQ0OTMKUldTVFJJN0xPdWtyV0d2MjA1UUk4b1ZxcVNybHVuZmttS3ZXcGRhaFU2NUk2VXN4ZGp5NTNjSGgK",
+      "endpoints": [
+        "https://fs-transcriber.s3.ap-southeast-1.amazonaws.com/release.json"
+      ],
+      "windows": {
+        "installMode": "passive",
+        "installerArgs": []
+      }
     }
   }
 }
