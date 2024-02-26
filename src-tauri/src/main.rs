@@ -608,6 +608,11 @@ impl Transcriber {
 
         println!("Transcribing audio");
 
+        emit_all(&window, "update-state", serde_json::json!({
+            "type": "transcribe-start",
+            "value": "",
+        }));
+
         let mut ctx = self.ctx.lock().unwrap();
 
         if let None = *ctx {
@@ -671,6 +676,11 @@ impl Transcriber {
 
             emit_all(&w, "update-state", serde_json::json!({
                 "type": "transcribe-stop",
+                "value": "",
+            }));
+
+            emit_all(&w, "app://update-state", serde_json::json!({
+                "type": "nothing",
                 "value": "",
             }));
         });
@@ -744,6 +754,8 @@ fn main() {
 
             let w = window.clone();
             tauri::async_runtime::spawn(async move {
+                essi_ffmpeg::FFmpeg::override_downloaded_ffmpeg_path(project_directory().cache_dir().to_path_buf()).expect("Can't set FFmpeg download directory");
+
                 if essi_ffmpeg::FFmpeg::get_program().expect("Failed to find FFmpeg").is_some() { return };
 
                 let Some((handle, mut progress_state)) = essi_ffmpeg::FFmpeg::auto_download().await.expect("Failed downloading FFmpeg") else { return };
@@ -875,8 +887,8 @@ fn main() {
                                 audio_buffers.push((buffer, dbg!(duration)));
                             }
 
-                            emit_all(&w, "update-state", serde_json::json!({
-                                "type": "transcribe-start",
+                            emit_all(&w, "app://update-state", serde_json::json!({
+                                "type": "process-audio",
                                 "value": "",
                             }));
 
@@ -900,6 +912,10 @@ fn main() {
 
                             match screen_buffer {
                                 Some(mut screen_buffer) => {
+                                    emit_all(&w, "app://update-state", serde_json::json!({
+                                        "type": "process-video",
+                                        "value": "",
+                                    }));
 
                                     let video_buffer = merge_av(&[(&merged_audio, Duration::ZERO, "wav"), (&screen_buffer, Duration::ZERO, "webm")]);
                                     screen_buffer.clear();
@@ -924,6 +940,11 @@ fn main() {
                                         });
                                 },
                             }
+
+                            emit_all(&w, "app://update-state", serde_json::json!({
+                                "type": "transcribing",
+                                "value": "",
+                            }));
 
                             transcriber_arc.lock().unwrap().transcribe(&window, &resampled_audio);
         
