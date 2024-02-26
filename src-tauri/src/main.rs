@@ -1,13 +1,13 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::{collections::HashMap, env::temp_dir, fs, io::{self, Cursor, Read, Seek, Write}, ops::Div, path::PathBuf, process::{self, Stdio}, sync::{Arc, Mutex}, thread, time::{Duration, SystemTime, UNIX_EPOCH}};
+use std::{collections::HashMap, env::temp_dir, fs, io::{self, Cursor, Read, Seek, Write}, ops::{Div, Sub}, path::PathBuf, process::{self, Stdio}, sync::{Arc, Mutex}, thread, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
 
 use cpal::{traits::{DeviceTrait, HostTrait, StreamTrait}, Device, FromSample, Host, Sample};
 use directories::ProjectDirs;
 use ffmpeg_next::Rescale;
 use ffmpeg_sidecar::{command::FfmpegCommand, paths::sidecar_dir};
-use hound::WavReader;
+use hound::{WavReader, WavWriter};
 use strum::IntoEnumIterator;
 use strum_macros::{EnumIter, IntoStaticStr};
 use tauri::{api::dialog, async_runtime::{channel, Sender}, Manager, State, Window};
@@ -384,6 +384,7 @@ fn load_model_list() -> Vec<serde_json::Value> {
         ).collect()
 }
 
+
 #[tauri::command]
 fn transcribe(window: Window, transcriber: State<'_, Arc<Mutex<Transcriber>>>, buffer: Vec<u8>) {
     println!("Received transcribe command");
@@ -442,7 +443,7 @@ type WavWriterHandle<'a> = Arc<Mutex<Option<hound::WavWriter<WriterHandle>>>>;
 fn write_input_data<T, U>(input: &[T], writer: &WavWriterHandle)
 where
     T: Sample,
-    U: Sample + hound::Sample + FromSample<T>,
+    U: Sample + hound::Sample + FromSample<T> + std::fmt::Debug,
 {
     if let Ok(mut guard) = writer.try_lock() {
         if let Some(writer) = guard.as_mut() {
@@ -476,12 +477,22 @@ pub fn format_timestamp(seconds: i64, always_include_hours: bool, decimal_marker
     format!("{hours_marker}{minutes:02}:{seconds:02}{decimal_marker}{milliseconds:03}")
 }
 
-fn merge_av(inputs: &[(&[u8], &str)]) -> Vec<u8> {
+pub fn format_duration(duration: Duration) -> String {
+    let milliseconds = duration.as_millis() % 1000;
+    let seconds = duration.as_secs() % 60;
+    let minutes = (duration.as_secs() / 60) % 60;
+    let hours = (duration.as_secs() / 60) / 60;
+
+    format!("{:0>2}:{:0>2}:{:0>2}.{:0>3}", hours, minutes, seconds, milliseconds)
+}
+
+fn merge_av(inputs: &[(&[u8], Duration, &str)]) -> Vec<u8> {
     let mut ffmpeg = essi_ffmpeg::FFmpeg::new().stderr(Stdio::inherit());
 
-    for &(buffer, format) in inputs {
+    for &(buffer, offset, format) in inputs {
         ffmpeg = ffmpeg
             .input(buffer).unwrap()
+            .args(["-itsoffset", &format_duration(offset)])
             .format(format)
             .done();
     }
@@ -505,10 +516,14 @@ fn merge_av(inputs: &[(&[u8], &str)]) -> Vec<u8> {
     output_buffer
 }
 
-fn merge_audio(inputs: &[&[u8]]) -> Vec<u8> {
+fn merge_audio(inputs: &[(&[u8], Duration)]) -> Vec<u8> {
     let mut ffmpeg = essi_ffmpeg::FFmpeg::new().stderr(Stdio::inherit());
 
-    for &buffer in inputs {
+    let mut offset = Duration::ZERO;
+
+    for &(buffer, off) in inputs {
+        offset = offset.max(off);
+
         ffmpeg = ffmpeg
             .input(buffer).unwrap()
             .format("wav")
@@ -518,8 +533,8 @@ fn merge_audio(inputs: &[&[u8]]) -> Vec<u8> {
     let mut output = None;
 
     let ffmpeg = ffmpeg
-        .args(["-filter_complex", &format!("amix=inputs={}:duration=longest", inputs.len())])
         .output(&mut output).unwrap()
+            .args(["-filter_complex", &format!("amix=inputs={}:duration=longest,adelay={}|{}", inputs.len(), offset.as_millis(), offset.as_millis())])
             .format("wav")
             .done();
 
@@ -772,6 +787,7 @@ fn main() {
             let screen_buffer_arc = screen_buffer.clone();
             thread::spawn(move || {
                 let mut recording_cluster = vec![];
+                let mut recording_duration = Instant::now();
         
                 loop {
                     let Some(command) = record_rx.blocking_recv() else { continue };
@@ -794,37 +810,46 @@ fn main() {
                             let stream = match config.sample_format() {
                                 cpal::SampleFormat::I8 => device.build_input_stream(
                                     &config.into(),
-                                    move |input, _: &_| write_input_data::<i8, i8>(input, &writer), |err| panic!("{err:?}"), None),
+                                    move |input, _: &_| {
+                                        write_input_data::<i8, i8>(input, &writer);
+                                    }, |err| panic!("{err:?}"), None),
                                 cpal::SampleFormat::I16 => device.build_input_stream(
                                     &config.into(),
-                                    move |input, _: &_| write_input_data::<i16, i16>(input, &writer), |err| panic!("{err:?}"), None),
+                                    move |input, _: &_| {
+                                        write_input_data::<i16, i16>(input, &writer);
+                                    }, |err| panic!("{err:?}"), None),
                                 cpal::SampleFormat::I32 => device.build_input_stream(
                                     &config.into(),
-                                    move |input, _: &_| write_input_data::<i32, i32>(input, &writer), |err| panic!("{err:?}"), None),
+                                    move |input, _: &_| {
+                                        write_input_data::<i32, i32>(input, &writer);
+                                    }, |err| panic!("{err:?}"), None),
                                 cpal::SampleFormat::F32 => device.build_input_stream(
                                     &config.into(),
-                                    move |input, _: &_| write_input_data::<f32, f32>(input, &writer), |err| panic!("{err:?}"), None),
+                                    move |input, _: &_| {
+                                        write_input_data::<f32, f32>(input, &writer);
+                                    }, |err| panic!("{err:?}"), None),
                                 _ => panic!("Unsupported sample format"),
                             }.unwrap();
         
                             stream.play().expect("Can't play recording stream");
+                            recording_duration = Instant::now();
         
-                            recording_cluster.push((buffer, wav_writer, stream));
+                            recording_cluster.push((buffer, wav_writer, stream, spec));
                         },
                         RecordCommand::Pause => {
-                            for (_, _, stream) in &recording_cluster {
+                            for (_, _, stream, _) in &recording_cluster {
                                 stream.pause().expect("Can't pause recording stream");
                             }
                         },
                         RecordCommand::Resume => {
-                            for (_, _, stream) in &recording_cluster {
+                            for (_, _, stream, _) in &recording_cluster {
                                 stream.play().expect("Can't pause recording stream");
                             }
                         },
                         RecordCommand::Stop => {
-                            let mut files = Vec::new();
+                            let mut audio_buffers = Vec::new();
 
-                            for (buffer_writer, wav_writer, _) in &mut recording_cluster {
+                            for (buffer_writer, wav_writer, _, spec) in &mut recording_cluster {
                                 wav_writer.lock()
                                     .unwrap()
                                     .take()
@@ -838,47 +863,61 @@ fn main() {
                                 buffer_writer.rewind().expect("Can't rewind recording buffer");
                                 buffer_writer.read_to_end(&mut buffer).expect("Can't read recording buffer result");
 
-                                // fs::write(&audio_path, &buffer).expect("Can't write recording result to temp file");
+                                let secs = WavReader::new(Cursor::new(&buffer)).unwrap().duration() / spec.sample_rate;
 
-                                files.push(buffer);
-        
-                                // emit_all(&window, "ffmpeg://audio-merger-push", serde_json::json!({
-                                //     "path": audio_path.display().to_string(),
-                                //     "format": "wav"
-                                // }));
+                                let duration = if dbg!(secs) == 0 {
+                                    Duration::ZERO
+                                } else {
+                                    Instant::now().duration_since(recording_duration).sub(Duration::from_secs(secs as _))
+                                };
+
+                                audio_buffers.push((buffer, dbg!(duration)));
                             }
 
                             println!("Processing audio");
 
-                            let merged_audio = merge_audio(files.iter().map(|v| v.as_slice()).collect::<Vec<&[u8]>>().as_slice());
+                            let merged_audio = merge_audio(audio_buffers.iter().map(|(v, d)| (v.as_slice(), *d)).collect::<Vec<(&[u8], Duration)>>().as_slice());
                             let resampled_audio = resample(&merged_audio);
 
-                            println!("Processing video");
-
+                            let mut count = 0;
                             let screen_buffer = loop {
+                                if count >= 300 { break None };
+                                
                                 std::thread::sleep(Duration::from_secs_f32(1.0 / 60.0));
+                                count += 1;
 
                                 let buffer = screen_buffer_arc.lock().unwrap();
                                 if buffer.len() == 0 { continue };
                                 
-                                break buffer;
+                                break Some(buffer);
                             };
 
-                            dbg!(screen_buffer.len());
+                            match screen_buffer {
+                                Some(mut screen_buffer) => {
 
-                            let video_buffer = merge_av(&[(&merged_audio, "wav"), (&screen_buffer, "webm")]);
+                                    let video_buffer = merge_av(&[(&merged_audio, Duration::ZERO, "wav"), (&screen_buffer, Duration::ZERO, "webm")]);
+                                    screen_buffer.clear();
 
-                            dialog::FileDialogBuilder::new()
-                                .set_title("Save Video")
-                                .add_filter("Output", &["mp4"])
-                                .save_file(move |path| {
-                                    let Some(path) = path else { return };
+                                    dialog::FileDialogBuilder::new()
+                                        .set_title("Save Video")
+                                        .add_filter("Output", &["mp4"])
+                                        .save_file(move |path| {
+                                            let Some(path) = path else { return };
 
-                                    std::fs::write(path, video_buffer).expect("Failed writing buffer");
-                                });
+                                            std::fs::write(path, video_buffer).expect("Failed writing buffer");
+                                        });
+                                },
+                                None => {
+                                    dialog::FileDialogBuilder::new()
+                                        .set_title("Save Audio")
+                                        .add_filter("Output", &["wav"])
+                                        .save_file(move |path| {
+                                            let Some(path) = path else { return };
 
-                            // let audio_path = temp_dir().join(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos().to_string()).with_extension("wav");
-                            // std::fs::write(audio_path, resampled_audio).unwrap();
+                                            std::fs::write(path, merged_audio).expect("Failed writing buffer");
+                                        });
+                                },
+                            }
 
                             transcriber_arc.lock().unwrap().transcribe(&window, &resampled_audio);
         

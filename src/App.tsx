@@ -65,11 +65,11 @@ function App() {
   const devices = new ReactiveMap<string, DeviceResult[] | undefined>();
   const selectedDevice = new ReactiveMap<string, number | undefined>();
 
-  const [inputDevices, setInputDevices] = createSignal<string[] | null>(null);
-  const [outputDevices, setOutputDevices] = createSignal<string[] | null>(null);
-  const [webcamDevices, setWebcamDevices] = createSignal<MediaDeviceInfo[] | null>(null);
+  // const [inputDevices, setInputDevices] = createSignal<string[] | null>(null);
+  // const [outputDevices, setOutputDevices] = createSignal<string[] | null>(null);
+  // const [webcamDevices, setWebcamDevices] = createSignal<MediaDeviceInfo[] | null>(null);
 
-  const [selectedWebcamDevice, selectWebcamDevice] = createSignal<MediaDeviceInfo | null>(null);
+  // const [selectedWebcamDevice, selectWebcamDevice] = createSignal<MediaDeviceInfo | null>(null);
 
   const [recording, setRecording] = createSignal<RecordingState | null>(RecordingState.Stopped);
 
@@ -79,8 +79,8 @@ function App() {
   const [screenRecorder, setScreenRecorder] = createSignal<MediaRecorder | null>(null);
   const [webcamRecorder, setWebcamRecorder] = createSignal<MediaRecorder | null>(null);
 
-  const [screenBuffer, setScreenBuffer] = createSignal<Uint8Array>(new Uint8Array());
-  const [audioBuffer, setAudioBuffer] = createSignal<Uint8Array>(new Uint8Array());
+  // const [screenBuffer, setScreenBuffer] = createSignal<Uint8Array>(new Uint8Array());
+  // const [audioBuffer, setAudioBuffer] = createSignal<Uint8Array>(new Uint8Array());
 
   const [models, setModels] = createSignal<Model[] | null>(null);
   const [selectedModel, selectModel] = createSignal<Model | null>(null);
@@ -117,128 +117,6 @@ function App() {
     }
   });
 
-  let ffmpeg = new FFmpeg();
-
-  ffmpeg.on("log", (event) => {
-    setSystemLog((l) => l + "\n" + event.message);
-  });
-
-  async function loadFFmpeg() {
-    console.log("Loading FFmpeg");
-    await ffmpeg.load({
-      coreURL: await toBlobURL(`/ffmpeg-core.js`, "text/javascript"),
-      wasmURL: await toBlobURL(`/ffmpeg-core.wasm`, "application/wasm"),
-      workerURL: await toBlobURL(`/ffmpeg-core.worker.js`, "text/javascript"),
-    });
-    console.log("FFmpeg loaded");
-  }
-  loadFFmpeg();
-
-  interface FileReference {
-    path: string;
-    format: string;
-  }
-
-  const [audioPaths, setAudioPaths] = createSignal<FileReference[]>([]);
-
-  appWindow.listen("ffmpeg://audio-merger-push", async (event) => {
-    const audioFiles = event.payload as FileReference;
-
-    setAudioPaths((v) => [...v, audioFiles]);
-  });
-
-  async function mergeSaveAudioVideo() {
-    const now = Date.now();
-
-    const fBuffer = audioBuffer();
-    const sBuffer = screenBuffer();
-
-    console.log({ fBuffer: fBuffer.length, sBuffer: sBuffer.length });
-
-    const audioFileName = `${now}.wav`;
-    const videoFileName = `${now}.webm`;
-
-    try {
-      await ffmpeg.deleteFile(audioFileName);
-      await ffmpeg.deleteFile(videoFileName);
-    } catch { };
-
-    console.log({ fBuffer: fBuffer.length, sBuffer: sBuffer.length });
-
-    console.log(await ffmpeg.writeFile(audioFileName, fBuffer));
-    await ffmpeg.writeFile(videoFileName, sBuffer);
-
-    console.log({ fBuffer: fBuffer.length, sBuffer: sBuffer.length });
-
-    console.log("STARTING!!!");
-    // https://superuser.com/a/277667
-    // Merge audio & video
-    console.log(await ffmpeg.exec(["-i", audioFileName, "-i", videoFileName, "output.mp4"]));
-
-    console.log("DONE!!!");
-
-    const pBuffer = await ffmpeg.readFile("output.mp4") as Uint8Array;
-
-    const buffer = Array.from(pBuffer);
-
-    console.log({ fBuffer: fBuffer.length, sBuffer: sBuffer.length, buffer: buffer.length, pBuffer: pBuffer.length });
-
-    console.log(buffer.length);
-
-    try { await ffmpeg.deleteFile("output.mp4") } catch {};
-
-    await invoke("save_video", { buffer, format: ["mp4"] });
-  }
-
-  createEffect(() => {
-    const audioFiles = audioPaths();
-
-    if (audioFiles.length === 0 || audioFiles.length < (deviceTypes()?.length || 0)) return;
-    
-    setTranscribeState(TranscribeState.Transcribing);
-    setAudioBuffer(new Uint8Array());
-
-    (async () => {
-      let fileArgs = [];
-
-      for (let index = 0; index < audioFiles.length; index++) {
-        const audioFile = audioFiles[index];
-       
-        const buffer = await readBinaryFile(audioFile.path);
-
-        const fileName = `${index}.${audioFile.format}`;
-
-        console.log({ asd: buffer.length });
-        
-        try { await ffmpeg.deleteFile(fileName) } catch {};
-        await ffmpeg.writeFile(fileName, buffer);
-
-        console.log({ asd: buffer.length });
-  
-        fileArgs.push("-i");
-        fileArgs.push(fileName);
-      }
-  
-      // https://stackoverflow.com/a/14528482
-      // Downmix & Downsample
-      await ffmpeg.exec([...fileArgs, "-filter_complex", `amix=inputs=${audioFiles.length}:duration=longest`, "merged.wav"]);
-
-      await ffmpeg.exec(["-i", "merged.wav", "-ar", "16000", "-ac", "1", "output.wav"])
-  
-      const pBuffer = await ffmpeg.readFile("merged.wav") as Uint8Array;
-      setAudioBuffer(pBuffer);
-
-      const buffer = Array.from(await ffmpeg.readFile("output.wav") as Uint8Array);
-
-      try {
-        await ffmpeg.deleteFile("merged.wav");
-        await ffmpeg.deleteFile("output.wav");
-      } catch {};
-
-      await invoke("transcribe", { buffer });
-    })();
-  })
-
   async function loadModels() {
     setModels(null);
 
@@ -273,7 +151,6 @@ function App() {
       // } break;
       case "transcribe-stop": {
         setTranscribeState(TranscribeState.Stopped);
-        mergeSaveAudioVideo();
       } break;
     }
   });
@@ -317,13 +194,9 @@ function App() {
     deviceTypes.forEach(async (deviceType, deviceTypeIndex) => {
       const dvcs = await invoke("list_devices", { deviceTypeIndex }) as DeviceResult[];
 
-      console.log({ dvcs });
-
       dvcs
         .forEach((dvcs, deviceIndex) => {
           if (!dvcs.is_selected) return;
-          console.log(dvcs);
-          console.log(deviceIndex);
           selectedDevice.set(deviceType, deviceIndex);
 
           createEffect(() =>
@@ -338,18 +211,18 @@ function App() {
   }
   loadDeviceTypes();
 
-  async function listWebcamDevices() {
-    setWebcamDevices(null);
+  // async function listWebcamDevices() {
+  //   setWebcamDevices(null);
 
-    const devices = await navigator.mediaDevices.enumerateDevices();
+  //   const devices = await navigator.mediaDevices.enumerateDevices();
 
-    setWebcamDevices(devices.filter((v) => v.kind === "videoinput"));
-  }
+  //   setWebcamDevices(devices.filter((v) => v.kind === "videoinput"));
+  // }
 
-  function reloadDevices() {
-    listWebcamDevices();
-  }
-  reloadDevices();
+  // function reloadDevices() {
+    // listWebcamDevices();
+  // }
+  // reloadDevices();
 
   async function startRecording() {
     setRecording(null);
@@ -395,12 +268,12 @@ function App() {
 
   async function startScreenRecorder() {
     let screen_stream = null;
-    let webcam_stream = null;
+    // let webcam_stream = null;
 
     try {
       screen_stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
     } catch {
-      message("Couldn't record your screen, please try choosing different screen or window", { title: "Couldn't record your screen", type: "error" });
+      // message("Couldn't record your screen, please try choosing different screen or window", { title: "Couldn't record your screen", type: "error" });
     }
 
     // try {
@@ -415,7 +288,6 @@ function App() {
     if (screen_stream !== null) {
       const screen_recorder = new MediaRecorder(screen_stream);
 
-      setScreenBuffer(new Uint8Array());
       setScreenRecorder(screen_recorder);
     
       screen_recorder.start();
@@ -525,7 +397,7 @@ function App() {
             </Show>
           </select>
         </div> */}
-        <button class="border py-2 cursor-pointer" onclick={reloadDevices}>Reload devices</button>
+        {/* <button class="border py-2 cursor-pointer" onclick={reloadDevices}>Reload devices</button> */}
       </div>
       <div class="flex flex-col gap-[0.125rem]">
         <span class="text-xs">System log</span>

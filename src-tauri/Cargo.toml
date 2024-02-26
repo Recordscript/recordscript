@@ -15,7 +15,7 @@ anyhow = "1.0.80"
 cpal = "0.15.2"
 directories = "5.0.1"
 tauri = { version = "1.5", features = [ "api-all", "dialog"] }
-essi-ffmpeg = { git = "https://github.com/MrAdhit/essi-ffmpeg", rev = "0624b0a" }
+essi-ffmpeg = { git = "https://github.com/MrAdhit/essi-ffmpeg", rev = "3b091c7" }
 ffmpeg-next = "6.1.1"
 ffmpeg-sidecar = "1.0.0"
 reqwest = "0.11.24"
