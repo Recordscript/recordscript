@@ -5,8 +5,8 @@ use std::{collections::HashMap, env::temp_dir, fs, io::{self, Cursor, Read, Seek
 
 use cpal::{traits::{DeviceTrait, HostTrait, StreamTrait}, Device, FromSample, Host, Sample};
 use directories::ProjectDirs;
-use ffmpeg_next::Rescale;
-use ffmpeg_sidecar::{command::FfmpegCommand, paths::sidecar_dir};
+// use ffmpeg_next::Rescale;
+// use ffmpeg_sidecar::{command::FfmpegCommand, paths::sidecar_dir};
 use hound::{WavReader, WavWriter};
 use strum::IntoEnumIterator;
 use strum_macros::{EnumIter, IntoStaticStr};
