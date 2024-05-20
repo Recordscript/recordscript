@@ -8,6 +8,8 @@ import { FFmpeg } from "@ffmpeg/ffmpeg";
 import { toBlobURL } from '@ffmpeg/util';
 import { ReactiveMap } from "@solid-primitives/map";
 
+import languages from "./lang.json";
+
 enum RecordingState {
   Recording,
   Paused,
@@ -88,6 +90,8 @@ function App() {
   const [models, setModels] = createSignal<Model[] | null>(null);
   const [selectedModel, selectModel] = createSignal<Model | null>(null);
 
+  const [language, setLanguage] = createSignal("auto");
+
   const [modelDownloadState, setModelDownloadState] = createSignal<DownloadState>(DownloadState.Stopped);
   const [modelDownloadProgress, setModelDownloadProgress] = createSignal<number>(0);
   
@@ -138,6 +142,12 @@ function App() {
       await invoke("switch_model", { modelIndex });
     })();
   });
+
+  createEffect(() => {
+    (async () => {
+      await invoke("switch_language", { language: language() });
+    })();
+  })
 
   appWindow.listen<EventResult>("app://update-state", (event) => {
     let type = event.payload.type;
@@ -404,6 +414,15 @@ function App() {
                 <option value={i().toString()}>{model.name}</option>
               }</For>
             </Show>
+          </select>
+        </div>
+        <div class="flex flex-col gap-1">
+        <label class="font-bold my-0">Language</label>
+          <select class="border p-1 text-xs w-full" id="language-list" onchange={(e) => setLanguage(e.target.value)}>
+            <option value="auto">Auto</option>
+            <For each={languages}>{([display, id]) => 
+              <option value={id}>{display}</option>
+            }</For>
           </select>
         </div>
         <div class="flex flex-col gap-1">

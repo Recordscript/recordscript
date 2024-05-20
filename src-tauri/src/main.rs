@@ -363,6 +363,13 @@ fn download_model(window: Window, model_index: usize) -> String {
 }
 
 #[tauri::command]
+fn switch_language(transcriber: State<'_, Arc<Mutex<Transcriber>>>, language: String) {
+    println!("Switching language to {language}");
+
+    transcriber.lock().unwrap().change_language(language);
+}
+
+#[tauri::command]
 fn switch_model(transcriber: State<'_, Arc<Mutex<Transcriber>>>, model_index: usize) {
     println!("Switching model to {model_index}");
 
@@ -582,6 +589,7 @@ fn emit_all<S: std::fmt::Debug + serde::Serialize + Clone + Send + 'static>(wind
 
 struct Transcriber {
     model: TranscriberModelType,
+    language: String,
     ctx: Arc<Mutex<Option<WhisperContext>>>,
 }
 
@@ -589,6 +597,7 @@ impl Transcriber {
     fn new(model: TranscriberModelType) -> Self {
         Self {
             model,
+            language: "auto".to_owned(),
             ctx: Default::default(),
         }
     }
@@ -598,6 +607,10 @@ impl Transcriber {
 
         // Take and drop the old context
         let _ = self.ctx.lock().unwrap().take();
+    }
+
+    fn change_language(&mut self, language: String) {
+        self.language = language;
     }
 
     /// Audio format must be in mono channel and 16khz samplerate
@@ -617,7 +630,7 @@ impl Transcriber {
 
         if let None = *ctx {
             let whisper_context = WhisperContext::new_with_params(self.model.model_path().to_str().unwrap(), WhisperContextParameters::default()).unwrap();
-            *ctx = Some(whisper_context);
+            *ctx = Some(whisper_context)
         }
 
         drop(ctx);
@@ -626,7 +639,7 @@ impl Transcriber {
         dbg!(&source_audio);
         fs::write(&source_audio, audio_buffer).unwrap();
 
-        let params = FullParams::new(SamplingStrategy::Greedy { best_of: 5 });
+        // let params = FullParams::new(SamplingStrategy::Greedy { best_of: 5 });
 
         // FIXME: TRANSCRIBE-PROGRESS find out why this doesn't work.
         // let w = self.window.clone();
@@ -637,11 +650,18 @@ impl Transcriber {
         //     }));
         // });
 
+        let language = self.language.clone();
+        dbg!(&language);
+
         let w = window.clone();
         let whisper_context = self.ctx.clone();
         std::thread::spawn(move || {
             let whisper_context = whisper_context.lock().unwrap();
             let mut state = whisper_context.as_ref().unwrap().create_state().unwrap();
+
+            let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 5 });
+
+            params.set_language(Some(&language));
 
             let wav = WavReader::new(std::fs::File::open(source_audio).unwrap()).unwrap();
             let samples = wav.into_samples::<i16>().map(|v| v.unwrap()).collect::<Vec<i16>>();
@@ -740,6 +760,7 @@ fn main() {
             load_model_list,
             download_model,
             switch_model,
+            switch_language,
             transcribe,
             list_device_types,
             list_devices,
