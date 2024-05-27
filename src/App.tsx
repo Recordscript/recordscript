@@ -265,7 +265,7 @@ function App() {
   async function startRecording() {
     setRecording(null);
 
-    await startScreenRecorder();
+    // await startScreenRecorder();
     
     await invoke("start_device_record");
 
@@ -275,8 +275,8 @@ function App() {
   async function pauseRecording() {
     setRecording(null);
 
-    screenRecorder()?.pause();
-    webcamRecorder()?.pause();
+    // screenRecorder()?.pause();
+    // webcamRecorder()?.pause();
 
     await invoke("pause_device_record");
 
@@ -286,8 +286,8 @@ function App() {
   async function resumeRecording() {
     setRecording(null);
 
-    screenRecorder()?.resume();
-    webcamRecorder()?.resume();
+    // screenRecorder()?.resume();
+    // webcamRecorder()?.resume();
 
     await invoke("resume_device_record");
 
@@ -297,7 +297,7 @@ function App() {
   async function stopRecording() {
     setRecording(null);
 
-    stopScreenRecorder();
+    // stopScreenRecorder();
     
     await invoke("stop_device_record");
 

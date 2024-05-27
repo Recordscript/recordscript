@@ -1,17 +1,15 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::{collections::HashMap, env::temp_dir, fs, io::{self, Cursor, Read, Seek, Write}, ops::{Div, Sub}, path::PathBuf, process::{self, Stdio}, sync::{Arc, Mutex}, thread, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
+use std::{collections::HashMap, env::temp_dir, fs, io::{self, Cursor, Read, Seek, Write}, ops::{Deref, Div, Sub}, path::PathBuf, process::{self, Stdio}, sync::{Arc, Mutex}, thread, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
 
 use cpal::{traits::{DeviceTrait, HostTrait, StreamTrait}, Device, FromSample, Host, Sample};
 use directories::ProjectDirs;
-// use ffmpeg_next::Rescale;
-// use ffmpeg_sidecar::{command::FfmpegCommand, paths::sidecar_dir};
-use hound::{WavReader, WavWriter};
+use hound::WavReader;
+use scrap::{Capturer, Display, Frame, TraitCapturer, TraitPixelBuffer};
 use strum::IntoEnumIterator;
 use strum_macros::{EnumIter, IntoStaticStr};
 use tauri::{api::dialog, async_runtime::{channel, Sender}, Manager, State, Window};
-use universal_archiver::format::FileFormat;
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 
 #[derive(Debug, Clone, Copy, Eq, Hash, PartialEq, EnumIter, IntoStaticStr)]
@@ -493,6 +491,36 @@ pub fn format_duration(duration: Duration) -> String {
     format!("{:0>2}:{:0>2}:{:0>2}.{:0>3}", hours, minutes, seconds, milliseconds)
 }
 
+fn encode_video(input: &[u8], format: &str) -> Vec<u8> {
+    let display = Display::all().unwrap().swap_remove(0);
+    let (width, height) = (display.width(), display.height());
+
+    let mut output = None;
+
+    let mut ffmpeg = essi_ffmpeg::FFmpeg::new()
+        .stderr(Stdio::inherit())
+        .input(input).unwrap()
+            .args(["-f", "rawvideo"])
+            .args(["-pixel_format", "bgr0"])
+            .args(["-video_size", &format!("{width}x{height}")])
+            .args(["-framerate", "60"])
+            .done()
+        .output(&mut output).unwrap()
+            .format(format)
+            .done()
+        .inspect_args(|arg| println!("Video encoder arg: {arg:?}"));
+
+    let mut ffmpeg = ffmpeg.start().unwrap();
+
+    ffmpeg.wait().unwrap();
+
+    let mut output_buffer = Vec::new();
+
+    output.unwrap().read_to_end(&mut output_buffer).unwrap();
+
+    output_buffer
+}
+
 fn merge_av(inputs: &[(&[u8], Duration, &str)]) -> Vec<u8> {
     let mut ffmpeg = essi_ffmpeg::FFmpeg::new().stderr(Stdio::inherit());
 
@@ -817,9 +845,10 @@ fn main() {
             });
 
             let transcriber_arc = transcriber.clone();
-            let screen_buffer_arc = screen_buffer.clone();
+            // let screen_buffer_arc = screen_buffer.clone();
             let w = window.clone();
             thread::spawn(move || {
+
                 let mut recording_cluster = vec![];
                 let mut recording_duration = Instant::now();
         
@@ -834,10 +863,11 @@ fn main() {
                             };
         
                             let spec = wav_spec_from_config(&config);
+    
+                            let audio_buffer = Arc::new(Mutex::new(Cursor::new(Vec::new())));
+                            let video_buffer = Arc::new(Mutex::new(Cursor::new(Vec::new())));
         
-                            let buffer = Arc::new(Mutex::new(Cursor::new(Vec::new())));
-        
-                            let writer = hound::WavWriter::new(WriterHandle(buffer.clone()), spec).unwrap();
+                            let writer = hound::WavWriter::new(WriterHandle(audio_buffer.clone()), spec).unwrap();
                             let wav_writer = Arc::new(Mutex::new(Some(writer)));
         
                             let writer = wav_writer.clone();
@@ -867,37 +897,69 @@ fn main() {
         
                             stream.play().expect("Can't play recording stream");
                             recording_duration = Instant::now();
+
+                            thread::spawn({
+                                let video_buffer = video_buffer.clone();
+                                let wav_writer = wav_writer.clone();
+
+                                move || {
+                                    let display = Display::all().unwrap().swap_remove(0);
+                                    let (width, height) = (display.width(), display.height());
+
+                                    println!("Starting screen capture at screen {:?} {width}x{height}", display.name());
+                                    let mut capturer = Capturer::new(display).unwrap();
+
+                                    while wav_writer.lock().unwrap().is_some() {
+                                        match capturer.frame(Duration::ZERO) {
+                                            Ok(frame) => {
+                                                let Frame::PixelBuffer(frame) = frame else { break };
+
+                                                let stride = frame.stride()[0];
+                                                let rowlen = 4 * width;
+                                                
+                                                for row in frame.data().chunks(stride) {
+                                                    let mut video_buffer = video_buffer.lock().unwrap();
+
+                                                    video_buffer.write(&row[..rowlen]).unwrap();
+                                                    
+                                                }
+                                            },
+                                            Err(ref e) if e.kind().eq(&io::ErrorKind::WouldBlock) => { },
+                                            Err(_) => { break }
+                                        }
+                                    }
+                                }
+                            });
         
-                            recording_cluster.push((buffer, wav_writer, stream, spec));
+                            recording_cluster.push((audio_buffer, video_buffer, wav_writer, stream, spec));
                         },
                         RecordCommand::Pause => {
-                            for (_, _, stream, _) in &recording_cluster {
+                            for (_, _, _, stream, _) in &recording_cluster {
                                 stream.pause().expect("Can't pause recording stream");
                             }
                         },
                         RecordCommand::Resume => {
-                            for (_, _, stream, _) in &recording_cluster {
+                            for (_, _, _, stream, _) in &recording_cluster {
                                 stream.play().expect("Can't pause recording stream");
                             }
                         },
                         RecordCommand::Stop => {
-                            let mut audio_buffers = Vec::new();
+                            let mut media_buffer = Vec::new();
 
-                            for (buffer_writer, wav_writer, _, spec) in &mut recording_cluster {
+                            for (audio_buffer, video_buffer, wav_writer, _, spec) in &mut recording_cluster {
                                 wav_writer.lock()
                                     .unwrap()
                                     .take()
                                     .unwrap()
                                     .finalize().expect("Can't finalize the recording");
 
-                                let mut buffer_writer = buffer_writer.lock().unwrap();
+                                let raw_audio_buffer = audio_buffer.lock().unwrap();
+                                let raw_video_buffer = video_buffer.lock().unwrap();
         
-                                let mut buffer = Vec::new();
+                                let raw_audio_buffer = raw_audio_buffer.get_ref().clone();
+                                let raw_video_buffer = raw_video_buffer.get_ref().clone();
 
-                                buffer_writer.rewind().expect("Can't rewind recording buffer");
-                                buffer_writer.read_to_end(&mut buffer).expect("Can't read recording buffer result");
-
-                                let secs = WavReader::new(Cursor::new(&buffer)).unwrap().duration() / spec.sample_rate;
+                                let secs = WavReader::new(Cursor::new(&raw_audio_buffer)).unwrap().duration() / spec.sample_rate;
 
                                 let duration = if dbg!(secs) == 0 {
                                     Duration::ZERO
@@ -905,7 +967,7 @@ fn main() {
                                     Instant::now().duration_since(recording_duration).sub(Duration::from_secs(secs as _))
                                 };
 
-                                audio_buffers.push((buffer, dbg!(duration)));
+                                media_buffer.push(((raw_audio_buffer, raw_video_buffer), dbg!(duration)));
                             }
 
                             emit_all(&w, "app://update-state", serde_json::json!({
@@ -915,21 +977,22 @@ fn main() {
 
                             println!("Processing audio");
 
-                            let merged_audio = merge_audio(audio_buffers.iter().map(|(v, d)| (v.as_slice(), *d)).collect::<Vec<(&[u8], Duration)>>().as_slice());
+                            let merged_audio = merge_audio(media_buffer.iter().map(|((v, _), d)| (v.as_slice(), *d)).collect::<Vec<(&[u8], Duration)>>().as_slice());
                             let resampled_audio = resample(&merged_audio);
 
-                            let mut count = 0;
-                            let screen_buffer = loop {
-                                if count >= 300 { break None };
+                            let screen_buffer = (|| { Some(media_buffer.first()?.0.1.clone()) })();
+                            // let mut count = 0;
+                            // let screen_buffer = loop {
+                            //     if count >= 300 { break None };
                                 
-                                std::thread::sleep(Duration::from_secs_f32(1.0 / 60.0));
-                                count += 1;
+                            //     std::thread::sleep(Duration::from_secs_f32(1.0 / 60.0));
+                            //     count += 1;
 
-                                let buffer = screen_buffer_arc.lock().unwrap();
-                                if buffer.len() == 0 { continue };
+                            //     let buffer = screen_buffer_arc.lock().unwrap();
+                            //     if buffer.len() == 0 { continue };
                                 
-                                break Some(buffer);
-                            };
+                            //     break Some(buffer);
+                            // };
 
                             match screen_buffer {
                                 Some(mut screen_buffer) => {
@@ -938,7 +1001,9 @@ fn main() {
                                         "value": "",
                                     }));
 
-                                    let video_buffer = merge_av(&[(&merged_audio, Duration::ZERO, "wav"), (&screen_buffer, Duration::ZERO, "webm")]);
+                                    let video_buffer = encode_video(&screen_buffer, "webm");
+
+                                    let video_buffer = merge_av(&[(&merged_audio, Duration::ZERO, "wav"), (&video_buffer, Duration::ZERO, "webm")]);
                                     screen_buffer.clear();
 
                                     dialog::FileDialogBuilder::new()
