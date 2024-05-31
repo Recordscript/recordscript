@@ -267,7 +267,7 @@ function App() {
 
     // await startScreenRecorder();
     
-    await invoke("start_device_record");
+    await invoke("start_device_record", { recordScreen: recordScreen() });
 
     setRecording(RecordingState.Recording);
   }
@@ -535,11 +535,11 @@ function App() {
                     </Match>
                   </Switch>
                 </Match>
-                <Match when={recording() === RecordingState.Paused}>
+                {/* <Match when={recording() === RecordingState.Paused}>
                   <button class="border py-2 cursor-pointer w-full" onclick={resumeRecording}>Resume</button>
-                </Match>
+                </Match> */}
                 <Match when={recording() === RecordingState.Recording}>
-                  <button class="border py-2 cursor-pointer w-full" onclick={pauseRecording}>Pause</button>
+                  {/* <button class="border py-2 cursor-pointer w-full" onclick={pauseRecording}>Pause</button> */}
                   <button class="border py-2 cursor-pointer w-full" onclick={stopRecording}>Stop</button>
                 </Match>
               </Switch>

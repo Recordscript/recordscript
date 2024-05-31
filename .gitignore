@@ -17,3 +17,7 @@ node_modules
 
 assets/
 dist/
+
+vite.config.ts.timestamp*
+ignored/
+*.webm

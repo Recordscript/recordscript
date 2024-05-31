@@ -15,7 +15,7 @@ anyhow = "1.0.80"
 cpal = "0.15.2"
 directories = "5.0.1"
 tauri = { version = "1.5", features = [ "updater", "api-all", "dialog"] }
-essi-ffmpeg = { git = "https://github.com/MrAdhit/essi-ffmpeg", rev = "051f162" }
+essi-ffmpeg = { git = "https://github.com/MrAdhit/essi-ffmpeg", rev = "088df45" }
 reqwest = "0.11.24"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -25,6 +25,8 @@ hound = "3.5.1"
 whisper-rs = { git = "https://github.com/tazz4843/whisper-rs", rev = "9861dfd" }
 memory-stats = "1.0.0"
 scrap = { path = "../libs/scrap" }
+tokio = { version = "1.37.0", features = ["full"] }
+webm = { git = "https://github.com/21pages/rust-webm", version = "1.1.0" }
 
 # [dependencies.winapi]
 # version = "0.3"

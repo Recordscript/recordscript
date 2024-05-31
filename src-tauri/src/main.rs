@@ -1,15 +1,16 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::{collections::HashMap, env::temp_dir, fs, io::{self, Cursor, Read, Seek, Write}, ops::{Deref, Div, Sub}, path::PathBuf, process::{self, Stdio}, sync::{Arc, Mutex}, thread, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
+use std::{collections::HashMap, env::temp_dir, fs, io::{self, Cursor, Read, Seek, Write}, ops::{Div, Sub}, path::PathBuf, process::{self, Stdio}, sync::{Arc, Mutex}, thread, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
 
 use cpal::{traits::{DeviceTrait, HostTrait, StreamTrait}, Device, FromSample, Host, Sample};
 use directories::ProjectDirs;
 use hound::WavReader;
-use scrap::{Capturer, Display, Frame, TraitCapturer, TraitPixelBuffer};
+use scrap::{codec::{EncoderApi as _, EncoderCfg, Quality}, vpxcodec, Capturer, Display, TraitCapturer, STRIDE_ALIGN};
 use strum::IntoEnumIterator;
 use strum_macros::{EnumIter, IntoStaticStr};
 use tauri::{api::dialog, async_runtime::{channel, Sender}, Manager, State, Window};
+use webm::mux::Track as _;
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 
 #[derive(Debug, Clone, Copy, Eq, Hash, PartialEq, EnumIter, IntoStaticStr)]
@@ -49,6 +50,7 @@ enum RecordCommand {
     Start {
         device_type: DeviceType,
         device: Device,
+        record_screen: bool,
     },
     Pause,
     Resume,
@@ -111,12 +113,12 @@ fn select_device(host: State<Host>, selected_devices: State<Mutex<SelectedDevice
 }
 
 #[tauri::command]
-fn start_device_record(host: State<Host>, selected_devices: State<Mutex<SelectedDevices<Device>>>, record_channel: State<RecordChannel>) {
+fn start_device_record(host: State<Host>, selected_devices: State<Mutex<SelectedDevices<Device>>>, record_channel: State<RecordChannel>, record_screen: bool) {
     for (device_type, device) in &selected_devices.lock().unwrap().0 {
         let device_type = *device_type;
         let device = device.clone_device(&host);
 
-        record_channel.try_send(RecordCommand::Start { device_type, device }).expect("Can't start recording");
+        record_channel.try_send(RecordCommand::Start { device_type, device, record_screen }).expect("Can't start recording");
     }
 }
 
@@ -133,11 +135,6 @@ fn resume_device_record(record_channel: State<RecordChannel>) {
 #[tauri::command]
 fn stop_device_record(record_channel: State<RecordChannel>) {
     record_channel.try_send(RecordCommand::Stop).expect("Can't stop recording");
-}
-
-#[tauri::command]
-fn send_screen_buffer(screen_buffer: State<Arc<Mutex<Vec<u8>>>>, buffer: Vec<u8>) {
-    *screen_buffer.lock().unwrap() = buffer;
 }
 
 #[tauri::command]
@@ -396,18 +393,6 @@ fn transcribe(window: Window, transcriber: State<'_, Arc<Mutex<Transcriber>>>, b
     transcriber.lock().unwrap().transcribe(&window, &buffer);
 }
 
-#[tauri::command]
-fn save_video(window: Window, buffer: Vec<u8>, format: Vec<&str>) {
-    dialog::FileDialogBuilder::new()
-        .set_title("Save Video")
-        .add_filter("Output", &format)
-        .save_file(move |path| {
-            let Some(path) = path else { return };
-
-            std::fs::write(path, buffer).expect("Failed writing buffer");
-        });
-}
-
 fn sample_format(format: cpal::SampleFormat) -> hound::SampleFormat {
     if format.is_float() {
         hound::SampleFormat::Float
@@ -491,36 +476,6 @@ pub fn format_duration(duration: Duration) -> String {
     format!("{:0>2}:{:0>2}:{:0>2}.{:0>3}", hours, minutes, seconds, milliseconds)
 }
 
-fn encode_video(input: &[u8], format: &str) -> Vec<u8> {
-    let display = Display::all().unwrap().swap_remove(0);
-    let (width, height) = (display.width(), display.height());
-
-    let mut output = None;
-
-    let mut ffmpeg = essi_ffmpeg::FFmpeg::new()
-        .stderr(Stdio::inherit())
-        .input(input).unwrap()
-            .args(["-f", "rawvideo"])
-            .args(["-pixel_format", "bgr0"])
-            .args(["-video_size", &format!("{width}x{height}")])
-            .args(["-framerate", "60"])
-            .done()
-        .output(&mut output).unwrap()
-            .format(format)
-            .done()
-        .inspect_args(|arg| println!("Video encoder arg: {arg:?}"));
-
-    let mut ffmpeg = ffmpeg.start().unwrap();
-
-    ffmpeg.wait().unwrap();
-
-    let mut output_buffer = Vec::new();
-
-    output.unwrap().read_to_end(&mut output_buffer).unwrap();
-
-    output_buffer
-}
-
 fn merge_av(inputs: &[(&[u8], Duration, &str)]) -> Vec<u8> {
     let mut ffmpeg = essi_ffmpeg::FFmpeg::new().stderr(Stdio::inherit());
 
@@ -538,7 +493,7 @@ fn merge_av(inputs: &[(&[u8], Duration, &str)]) -> Vec<u8> {
         .output(&mut output).unwrap()
             .codec_audio("copy")
             .codec_video("copy")
-            .format("matroska")
+            .format("mp4")
             .done();
 
     let mut ffmpeg = ffmpeg.inspect_args(|args| { dbg!(args); }).start().unwrap();
@@ -760,7 +715,6 @@ fn main() {
     let (record_tx, mut record_rx): (RecordChannel, _) = channel(128);
 
     let transcriber = Arc::new(Mutex::new(Transcriber::new(TranscriberModelType::TinyWhisper)));
-    let screen_buffer: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
 
     let host = cpal::default_host();
 
@@ -775,7 +729,6 @@ fn main() {
     tauri::Builder::default()
         .manage(Mutex::new(selected_devices))
         .manage(transcriber.clone())
-        .manage(screen_buffer.clone())
         .manage(record_tx)
         .manage(host)
         .invoke_handler(tauri::generate_handler![
@@ -783,7 +736,6 @@ fn main() {
             pause_device_record,
             resume_device_record,
             stop_device_record,
-            send_screen_buffer,
             send_webcam_buffer,
             load_model_list,
             download_model,
@@ -793,13 +745,11 @@ fn main() {
             list_device_types,
             list_devices,
             select_device,
-            save_video,
         ])
         .setup(move |app| {
             let window = app.get_window("main").expect("Can't get the main window");
 
             let transcriber = transcriber.clone();
-            let screen_buffer = screen_buffer.clone();
 
             let w = window.clone();
             tauri::async_runtime::spawn(async move {
@@ -845,18 +795,16 @@ fn main() {
             });
 
             let transcriber_arc = transcriber.clone();
-            // let screen_buffer_arc = screen_buffer.clone();
             let w = window.clone();
             thread::spawn(move || {
-
                 let mut recording_cluster = vec![];
-                let mut recording_duration = Instant::now();
+                let recording_duration = Instant::now();
         
                 loop {
                     let Some(command) = record_rx.blocking_recv() else { continue };
         
                     match command {
-                        RecordCommand::Start { device_type, device } => {
+                        RecordCommand::Start { device_type, device, record_screen } => {
                             let config = match device_type {
                                 DeviceType::Microphone => device.default_input_config().unwrap(),
                                 DeviceType::Speaker => device.default_output_config().unwrap(),
@@ -896,40 +844,84 @@ fn main() {
                             }.unwrap();
         
                             stream.play().expect("Can't play recording stream");
-                            recording_duration = Instant::now();
 
-                            thread::spawn({
-                                let video_buffer = video_buffer.clone();
-                                let wav_writer = wav_writer.clone();
-
-                                move || {
-                                    let display = Display::all().unwrap().swap_remove(0);
-                                    let (width, height) = (display.width(), display.height());
-
-                                    println!("Starting screen capture at screen {:?} {width}x{height}", display.name());
-                                    let mut capturer = Capturer::new(display).unwrap();
-
-                                    while wav_writer.lock().unwrap().is_some() {
-                                        match capturer.frame(Duration::ZERO) {
-                                            Ok(frame) => {
-                                                let Frame::PixelBuffer(frame) = frame else { break };
-
-                                                let stride = frame.stride()[0];
-                                                let rowlen = 4 * width;
-                                                
-                                                for row in frame.data().chunks(stride) {
-                                                    let mut video_buffer = video_buffer.lock().unwrap();
-
-                                                    video_buffer.write(&row[..rowlen]).unwrap();
-                                                    
+                            match device_type {
+                                DeviceType::Microphone => {  },
+                                DeviceType::Speaker => {
+                                    if record_screen {
+                                        thread::spawn({
+                                            let video_buffer = video_buffer.clone();
+                                            let wav_writer = wav_writer.clone();
+            
+                                            move || {
+                                                let display = Display::all().unwrap().swap_remove(0);
+    
+                                                let (width, height) = (display.width(), display.height());
+    
+                                                println!("Starting screen capture at screen {:?} {width}x{height}", display.name());
+    
+                                                let mut video_buffer = video_buffer.lock().unwrap();
+                                                let mut output = Cursor::new(Vec::new());
+    
+                                                let mut mux = webm::mux::Segment::new(webm::mux::Writer::new(&mut output)).unwrap();
+    
+                                                let (vpx_codec, mux_codec) = (vpxcodec::VpxVideoCodecId::VP9, webm::mux::VideoCodecId::VP9);
+    
+                                                let mut video_track = mux.add_video_track(width as _, height as _, None, mux_codec);
+    
+                                                let mut encoder = vpxcodec::VpxEncoder::new(
+                                                    EncoderCfg::VPX(vpxcodec::VpxEncoderConfig {
+                                                        width: width as _,
+                                                        height: height as _,
+                                                        quality: Quality::Custom(20000),
+                                                        codec: vpx_codec,
+                                                        keyframe_interval: None,
+                                                    }),
+                                                    false,
+                                                ).unwrap();
+    
+                                                let mut capturer = Capturer::new(display).unwrap();
+    
+                                                let start = Instant::now();
+    
+                                                let mut yuv = Vec::new();
+                                                let mut mid_data = Vec::new();
+    
+                                                let mut should_stop = false;
+    
+                                                loop {
+                                                    let now = Instant::now();
+                                                    let time = now - start;
+    
+                                                    let mut has_frame = false;
+    
+                                                    if let Ok(frame) = capturer.frame(Duration::ZERO) {
+                                                        frame.to(encoder.yuvfmt(), &mut yuv, &mut mid_data).unwrap();
+                                                        has_frame = true;
+                                                    }
+    
+                                                    let ms = time.as_millis();
+    
+                                                    for frame in encoder.encode(ms as _, &yuv, STRIDE_ALIGN).unwrap() {
+                                                        video_track.add_frame(frame.data, (frame.pts * 1_000_000) as _, frame.key);
+                                                    }
+    
+                                                    if should_stop && has_frame { break };
+    
+                                                    if wav_writer.lock().unwrap().is_none() {
+                                                        should_stop = true;
+                                                    }
                                                 }
-                                            },
-                                            Err(ref e) if e.kind().eq(&io::ErrorKind::WouldBlock) => { },
-                                            Err(_) => { break }
-                                        }
+    
+                                                mux.finalize(None);
+    
+                                                *video_buffer = output;
+                                            }
+                                        });
                                     }
-                                }
-                            });
+                                },
+                            }
+
         
                             recording_cluster.push((audio_buffer, video_buffer, wav_writer, stream, spec));
                         },
@@ -953,13 +945,13 @@ fn main() {
                                     .unwrap()
                                     .finalize().expect("Can't finalize the recording");
 
-                                let raw_audio_buffer = audio_buffer.lock().unwrap();
-                                let raw_video_buffer = video_buffer.lock().unwrap();
+                                let audio_buffer = audio_buffer.lock().unwrap();
+                                let video_buffer = video_buffer.lock().unwrap();
         
-                                let raw_audio_buffer = raw_audio_buffer.get_ref().clone();
-                                let raw_video_buffer = raw_video_buffer.get_ref().clone();
+                                let audio_buffer = audio_buffer.get_ref().clone();
+                                let video_buffer = video_buffer.get_ref().clone();
 
-                                let secs = WavReader::new(Cursor::new(&raw_audio_buffer)).unwrap().duration() / spec.sample_rate;
+                                let secs = WavReader::new(Cursor::new(&audio_buffer)).unwrap().duration() / spec.sample_rate;
 
                                 let duration = if dbg!(secs) == 0 {
                                     Duration::ZERO
@@ -967,7 +959,7 @@ fn main() {
                                     Instant::now().duration_since(recording_duration).sub(Duration::from_secs(secs as _))
                                 };
 
-                                media_buffer.push(((raw_audio_buffer, raw_video_buffer), dbg!(duration)));
+                                media_buffer.push(((audio_buffer, video_buffer), dbg!(duration)));
                             }
 
                             emit_all(&w, "app://update-state", serde_json::json!({
@@ -980,19 +972,7 @@ fn main() {
                             let merged_audio = merge_audio(media_buffer.iter().map(|((v, _), d)| (v.as_slice(), *d)).collect::<Vec<(&[u8], Duration)>>().as_slice());
                             let resampled_audio = resample(&merged_audio);
 
-                            let screen_buffer = (|| { Some(media_buffer.first()?.0.1.clone()) })();
-                            // let mut count = 0;
-                            // let screen_buffer = loop {
-                            //     if count >= 300 { break None };
-                                
-                            //     std::thread::sleep(Duration::from_secs_f32(1.0 / 60.0));
-                            //     count += 1;
-
-                            //     let buffer = screen_buffer_arc.lock().unwrap();
-                            //     if buffer.len() == 0 { continue };
-                                
-                            //     break Some(buffer);
-                            // };
+                            let screen_buffer = (|| { Some(media_buffer.iter().filter(|v| v.0.1.len() > 0).nth(0).map(|v| v.clone().0.1)) })().flatten();
 
                             match screen_buffer {
                                 Some(mut screen_buffer) => {
@@ -1001,9 +981,7 @@ fn main() {
                                         "value": "",
                                     }));
 
-                                    let video_buffer = encode_video(&screen_buffer, "webm");
-
-                                    let video_buffer = merge_av(&[(&merged_audio, Duration::ZERO, "wav"), (&video_buffer, Duration::ZERO, "webm")]);
+                                    let video_buffer = merge_av(&[(&merged_audio, Duration::ZERO, "wav"), (&screen_buffer, Duration::ZERO, "webm")]);
                                     screen_buffer.clear();
 
                                     dialog::FileDialogBuilder::new()
