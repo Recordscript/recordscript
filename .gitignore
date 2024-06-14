@@ -21,3 +21,4 @@ dist/
 vite.config.ts.timestamp*
 ignored/
 *.webm
+*.mp4

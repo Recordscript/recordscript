@@ -5,7 +5,6 @@ import { appWindow } from "@tauri-apps/api/window";
 import { readBinaryFile } from "@tauri-apps/api/fs";
 
 import { FFmpeg } from "@ffmpeg/ffmpeg";
-import { toBlobURL } from '@ffmpeg/util';
 import { ReactiveMap } from "@solid-primitives/map";
 
 import languages from "./lang.json";
@@ -101,7 +100,7 @@ function App() {
   const [systemLog, setSystemLog] = createSignal<string>("");
 
   const [transcribeState, setTranscribeState] = createSignal<TranscribeState>(TranscribeState.Stopped);
-  // const [transcribeProgress, setTranscribeProgress] = createSignal<number>(0);
+  const [transcribeProgress, setTranscribeProgress] = createSignal<number>(0);
 
   appWindow.listen<EventResult>("ffmpeg://download", (event) => {
     let type = event.payload.type;
@@ -182,11 +181,11 @@ function App() {
         setTranscribeState(TranscribeState.Transcribing);
       } break;
       // FIXME: look at "FIXME: TRANSCRIBE-PROGRESS" at src-tauri
-      // case "transcribe-progress": {
-      //   let progress = parseInt(event.payload.value);
+      case "transcribe-progress": {
+        let progress = parseInt(event.payload.value);
 
-      //   setTranscribeProgress(progress);
-      // } break;
+        setTranscribeProgress(progress);
+      } break;
       case "transcribe-stop": {
         setTranscribeState(TranscribeState.Stopped);
       } break;
@@ -265,8 +264,6 @@ function App() {
   async function startRecording() {
     setRecording(null);
 
-    // await startScreenRecorder();
-    
     await invoke("start_device_record", { recordScreen: recordScreen() });
 
     setRecording(RecordingState.Recording);
@@ -274,9 +271,6 @@ function App() {
 
   async function pauseRecording() {
     setRecording(null);
-
-    // screenRecorder()?.pause();
-    // webcamRecorder()?.pause();
 
     await invoke("pause_device_record");
 
@@ -286,9 +280,6 @@ function App() {
   async function resumeRecording() {
     setRecording(null);
 
-    // screenRecorder()?.resume();
-    // webcamRecorder()?.resume();
-
     await invoke("resume_device_record");
 
     setRecording(RecordingState.Recording);
@@ -297,74 +288,9 @@ function App() {
   async function stopRecording() {
     setRecording(null);
 
-    // stopScreenRecorder();
-    
     await invoke("stop_device_record");
 
     setRecording(RecordingState.Stopped);
-  }
-
-  async function startScreenRecorder() {
-    if (!recordScreen()) return;
-
-    let screen_stream = null;
-    // let webcam_stream = null;
-
-    try {
-      screen_stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
-    } catch {
-      // message("Couldn't record your screen, please try choosing different screen or window", { title: "Couldn't record your screen", type: "error" });
-    }
-
-    // try {
-    //   webcam_stream = await navigator.mediaDevices.getUserMedia({ video: { deviceId: selectedWebcamDevice()?.deviceId }, audio: false });
-    // } catch {
-    //   message("Couldn't record your camera, please try choosing different camera device", { title: "Couldn't record your camera", type: "error" });
-    // }
-
-    setScreenStream(screen_stream);
-    // setWebcamStream(webcam_stream);
-
-    if (screen_stream !== null) {
-      const screen_recorder = new MediaRecorder(screen_stream);
-
-      setScreenRecorder(screen_recorder);
-    
-      screen_recorder.start();
-
-      screen_recorder.ondataavailable = async (e) => {
-        const buffer = Array.from(new Uint8Array(await e.data.arrayBuffer()));
-
-        await invoke("send_screen_buffer", { buffer });
-
-        if (recording() !== RecordingState.Stopped) stopRecording();
-      }
-    }
-
-    // if (webcam_stream !== null) {
-    //   const webcam_recorder = new MediaRecorder(webcam_stream);
-
-    //   setWebcamRecorder(webcam_recorder);
-
-    //   webcam_recorder.start();
-
-    //   webcam_recorder.ondataavailable = async (e) => {
-    //     const buffer = Array.from(new Uint8Array(await e.data.arrayBuffer()));
-  
-    //     await invoke("send_webcam_buffer", { buffer });
-    //   }
-    // }
-  }
-
-  function stopScreenRecorder() {
-    screenStream()?.getTracks().forEach((v) => v.stop());
-    webcamStream()?.getTracks().forEach((v) => v.stop());
-
-    setScreenStream(null);
-    setScreenRecorder(null);
-
-    setWebcamStream(null);
-    setWebcamRecorder(null);
   }
 
   return (
