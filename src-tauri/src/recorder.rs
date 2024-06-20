@@ -1,6 +1,6 @@
-use std::collections::HashMap;
-
-use cpal::{traits::DeviceTrait, Device};
+use anyhow::Result;
+use cpal::{traits::{DeviceTrait, HostTrait}, Device, Host};
+use scrap::Display;
 use strum_macros::{EnumIter, IntoStaticStr};
 
 #[derive(Debug, Clone, Copy, Eq, Hash, PartialEq, EnumIter, IntoStaticStr)]
@@ -9,10 +9,26 @@ pub enum DeviceType {
     Speaker,
 }
 
-pub struct SelectedDevices<D: DeviceTrait + Send + Sync>(pub HashMap<DeviceType, D>);
+pub struct SelectedDevice {
+    pub microphone: Device,
+    pub speaker: Device,
+    pub screen: Display,
+}
+
+unsafe impl Send for SelectedDevice { }
+
+impl Clone for SelectedDevice {
+    fn clone(&self) -> Self {
+        Self {
+            microphone: self.microphone.clone(),
+            speaker: self.speaker.clone(),
+            screen: self.screen.clone_device(),
+        }
+    }
+}
 
 pub trait DeviceEq {
-    fn eq_device(&self, device: &Device) -> bool;
+    fn eq_device(&self, device: &Self) -> bool;
 }
 
 impl DeviceEq for Device {
@@ -24,20 +40,64 @@ impl DeviceEq for Device {
     }
 }
 
+impl DeviceEq for Display {
+    fn eq_device(&self, device: &Display) -> bool {
+        let a = self.name();
+        let b = device.name();
+
+        a.eq(&b)
+    }
+}
+
+pub trait DeviceClone {
+    fn clone_device(&self) -> Self;
+}
+
+impl DeviceClone for Display {
+    fn clone_device(&self) -> Self {
+        list_screen().unwrap().into_iter()
+            .filter(|d| d.eq_device(self))
+            .nth(0).unwrap()
+    }
+}
+
 pub enum RecordCommand {
-    Start {
-        devices: Vec<(DeviceType, Device)>,
-        record_screen: bool,
-    },
+    Start(SelectedDevice),
     Pause,
     Resume,
     Stop
 }
-
-pub type RecordChannel = tauri::async_runtime::Sender<RecordCommand>;
 
 #[derive(serde::Serialize)]
 pub struct DeviceResult {
     pub name: String,
     pub is_selected: bool,
 }
+
+fn all_hosts() -> Vec<Host> {
+    cpal::ALL_HOSTS.into_iter()
+        .map(|host_id| cpal::host_from_id(*host_id))
+        .filter_map(|host| host.ok())
+        .collect()
+}
+
+pub fn list_microphone() -> Vec<Device> {
+    all_hosts().into_iter()
+        .map(|host| host.input_devices())
+        .filter_map(|devices| devices.ok())
+        .flat_map(|devices| devices.collect::<Vec<Device>>())
+        .collect()
+}
+
+pub fn list_speaker() -> Vec<Device> {
+    all_hosts().into_iter()
+        .map(|host| host.output_devices())
+        .filter_map(|devices| devices.ok())
+        .flat_map(|devices| devices.collect::<Vec<Device>>())
+        .collect()
+}
+
+pub fn list_screen() -> anyhow::Result<Vec<Display>> {
+    Ok(scrap::Display::all()?)
+}
+

@@ -1,480 +1,839 @@
-import { For, Match, Show, Switch, createEffect, createSignal, untrack } from "solid-js";
-import { invoke } from "@tauri-apps/api/tauri";
-import { message } from "@tauri-apps/api/dialog";
+import {
+    createEffect,
+    createResource,
+    createSignal,
+    For,
+    JSX,
+    Match,
+    Show,
+    Suspense,
+    Switch,
+    untrack,
+} from "solid-js";
+import { dialog, invoke } from "@tauri-apps/api";
+import { InvokeArgs } from "@tauri-apps/api/tauri";
 import { appWindow } from "@tauri-apps/api/window";
-import { readBinaryFile } from "@tauri-apps/api/fs";
 
-import { FFmpeg } from "@ffmpeg/ffmpeg";
-import { ReactiveMap } from "@solid-primitives/map";
+import * as util from "./util";
 
 import languages from "./lang.json";
+import config from "./config.json";
+import { createStore } from "solid-js/store";
+import { ReactiveMap } from "@solid-primitives/map";
+import { emit } from "@tauri-apps/api/event";
 
-enum RecordingState {
-  Recording,
-  Paused,
-  Stopped,
-}
-
-enum DownloadState {
-  Downloading,
-  Stopped,
-  Error,
-}
-
-enum TranscribeState {
-  Transcribing,
-  Stopped,
-}
-
-enum FFmpegDownloadState {
-  Stopped,
-  Downloading,
-  Extracting,
-}
-
-enum AppState {
-  Nothing,
-  DownloadingModel,
-  DownloadingFFmpeg,
-  ProcessingAudio,
-  ProcessingVideo,
-  Transcribing,
+interface DeviceResult {
+    name: string;
+    is_selected: boolean;
 }
 
 interface Model {
-  name: string;
-  disk_usage: number;
-  mem_usage: number;
-  is_downloaded: boolean;
+    name: string;
+    disk_usage: number;
+    mem_usage: number;
+    is_downloaded: boolean;
+}
+
+enum ModelState {
+    Stopped,
+    Downloading,
+}
+
+enum RecorderState {
+    Stopped,
+    Running,
+    Paused,
 }
 
 interface EventResult {
-  type: string;
-  value: any;
+    type: string;
+    value: any;
 }
 
-interface DeviceResult {
-  name: string;
-  is_selected: boolean;
+interface SavePathConfig {
+    save_path: string;
+    save_path_histories: string[];
+}
+
+interface GeneralConfig {
+    transcription: SavePathConfig;
+    transcription_email_to: string;
+    video: SavePathConfig;
+}
+
+interface SMTPConfig {
+    host: string;
+    port: number;
+    username: string;
+    password: string;
+    from: string;
+}
+
+function createInvokeResource<R>(cmd: string, args?: InvokeArgs) {
+    return createResource(async () => {
+        return await invoke(cmd, args) as R;
+    });
+}
+
+function EmailConfigurator<P extends { on_save: () => void }>(props: P) {
+    const [smtp_config, { refetch: update_smtp_config }] = createInvokeResource<
+        SMTPConfig
+    >("get_smtp_config");
+
+    const error = new ReactiveMap<"host" | "port" | "username" | "password" | "from", string>();
+
+    const [host, set_host] = createSignal("");
+    const [port, set_port] = createSignal<number | null>(null);
+    const [username, set_username] = createSignal("");
+    const [password, set_password] = createSignal("");
+    const [from, set_from] = createSignal("");
+
+    async function set_config(config: SMTPConfig) {
+        await invoke("set_smtp_config", { config });
+        update_smtp_config();
+    }
+
+    async function on_save() {
+        const has_error = Array.from(error.keys()).length !== 0;
+
+        if (has_error) {
+            emit("app://notification", {
+                "type": "error",
+                "value": "Unable to save because some of the fields are not valid"
+            });
+
+            return;
+        }
+
+        const config = smtp_config()!;
+
+        await set_config({
+            host: host() || config.host,
+            port: port() || config.port,
+            username: username() || config.username,
+            password: password() || config.password,
+            from: from() || config.from,
+        });
+
+        props.on_save();
+    }
+
+    return (
+        <div class="p-2 h-full flex flex-col">
+            <h2 class="text-xl font-bold h-fit">Email Configuration</h2>
+            <hr class="my-2" />
+            <div class="flex flex-col gap-1">
+                <section class="flex items-center gap-2">
+                    <h3 class="text-sm font-bold my-0 h-fit w-52">
+                        SMTP Host
+                    </h3>
+                    <div class="flex flex-col w-full">
+                        <span class="absolute text-xs ml-1 mb-[-7px] px-2 z-30 bg-white w-fit text-red-800">
+                            {error.get("host")}
+                        </span>
+                        <input
+                            type="text"
+                            class="border rounded p-2 text-xs disabled:bg-gray-50 mt-2"
+                            placeholder="smtp.example.com"
+                            value={smtp_config()?.host}
+                            onchange={(event) => {
+                                if (util.validate_domain_name(event.currentTarget.value) === false)
+                                    error.set("host", "Invalid domain name");
+                                else
+                                    error.delete("host");
+
+                                set_host(event.currentTarget.value);
+                            }}
+                        />
+                    </div>
+                </section>
+                <section class="flex items-center gap-2">
+                    <h3 class="text-sm font-bold my-0 h-fit w-52">
+                        SMTP Port
+                    </h3>
+                    <div class="flex flex-col w-full">
+                        <span class="absolute text-xs ml-1 mb-[-7px] px-2 z-30 bg-white w-fit text-red-800">
+                            {error.get("port")}
+                        </span>
+                        <input
+                            type="text"
+                            class="border rounded p-2 text-xs disabled:bg-gray-50 mt-2"
+                            placeholder="465"
+                            value={smtp_config()?.port}
+                            onchange={(event) => {
+                                const port = parseInt(event.currentTarget.value);
+
+                                if (util.validate_port(port) === false)
+                                    error.set("port", "Invalid port (must be a number >= 0 & <= 65535)");
+                                else
+                                    error.delete("port");
+
+                                set_port(port);
+                            }}
+                        />
+                    </div>
+                </section>
+                <section class="flex items-center gap-2">
+                    <h3 class="text-sm font-bold my-0 h-fit w-52">
+                        SMTP Username
+                    </h3>
+                    <div class="flex flex-col w-full">
+                        <span class="absolute text-xs ml-1 mb-[-7px] px-2 z-30 bg-white w-fit text-red-800">
+                            {error.get("username")}
+                        </span>
+                        <input
+                            type="text"
+                            class="border rounded p-2 text-xs disabled:bg-gray-50 mt-2"
+                            placeholder="Username"
+                            value={smtp_config()?.username}
+                            onchange={(event) => {
+                                set_username(event.currentTarget.value);
+                            }}
+                        />
+                    </div>
+                </section>
+                <section class="flex items-center gap-2">
+                    <h3 class="text-sm font-bold my-0 h-fit w-52">
+                        SMTP Password
+                    </h3>
+                    <div class="flex flex-col w-full">
+                        <span class="absolute text-xs ml-1 mb-[-7px] px-2 z-30 bg-white w-fit text-red-800">
+                            {error.get("password")}
+                        </span>
+                        <input
+                            type="password"
+                            class="border rounded p-2 text-xs disabled:bg-gray-50 mt-2"
+                            placeholder="Password"
+                            value={smtp_config()?.password}
+                            onchange={(event) => {
+                                set_password(event.currentTarget.value);
+                            }}
+                        />
+                    </div>
+                </section>
+                <section class="flex items-center gap-2">
+                    <h3 class="text-sm font-bold my-0 h-fit w-52">
+                        From
+                    </h3>
+                    <div class="flex flex-col w-full">
+                        <span class="absolute text-xs ml-1 mb-[-7px] px-2 z-30 bg-white w-fit text-red-800">
+                            {error.get("from")}
+                        </span>
+                        <input
+                            type="text"
+                            class="border rounded p-2 text-xs disabled:bg-gray-50 mt-2"
+                            placeholder="someone@example.com"
+                            value={smtp_config()?.from}
+                            onchange={(event) => {
+                                if (util.validate_email_from_header(event.currentTarget.value) === false)
+                                    error.set("from", "Invalid \"From\" header");
+                                else
+                                    error.delete("from");
+
+                                set_from(event.currentTarget.value);
+                            }}
+                        />
+                    </div>
+                </section>
+                <a
+                    class="text-xs text-blue-500 underline"
+                    href={config.smtp_article_url}
+                    target="_blank"
+                >
+                    Learn how to setup SMTP from this article
+                </a>
+            </div>
+            <div class="w-full h-full flex items-end">
+                <button
+                    onClick={on_save}
+                    class="border rounded py-2 cursor-pointer font-bold text-xs w-full"
+                >
+                    Save
+                </button>
+            </div>
+        </div>
+    );
+}
+
+function NotificationError<P extends { title: string; message: string }>(
+    props: P,
+) {
+    return (
+        <div class="bg-red-700 bg-opacity-75 p-2 rounded text-white">
+            <h3 class="font-extrabold">{props.title}</h3>
+            <p
+                onClick={(event) => event.stopPropagation()}
+                class="text-sm cursor-text whitespace-pre-line"
+            >
+                {props.message}
+            </p>
+        </div>
+    );
+}
+
+function NotificationInfo<P extends { title: string; message: string }>(
+    props: P,
+) {
+    return (
+        <div class="bg-zinc-700 bg-opacity-75 p-2 rounded text-white">
+            <h3 class="font-extrabold">{props.title}</h3>
+            <p
+                onClick={(event) => event.stopPropagation()}
+                class="text-sm cursor-text whitespace-pre-line"
+            >
+                {props.message}
+            </p>
+        </div>
+    );
 }
 
 function App() {
-  const [appState, setAppState] = createSignal<AppState>(AppState.Nothing);
-  const [deviceTypes, setDeviceTypes] = createSignal<string[] | null>(null);
-  
-  // const [devices, setDevices] = createSignal<Map<string, DeviceResult[] | undefined>>(new Map());
-  // const [selectedDevice, selectDevice] = createSignal<Map<string, number | undefined>>(new Map());
-  const devices = new ReactiveMap<string, DeviceResult[] | undefined>();
-  const selectedDevice = new ReactiveMap<string, number | undefined>();
+    const [popup, set_popup] = createSignal<JSX.Element | null>(null);
+    const [notification, set_notification] = createSignal<JSX.Element[]>([]);
 
-  // const [inputDevices, setInputDevices] = createSignal<string[] | null>(null);
-  // const [outputDevices, setOutputDevices] = createSignal<string[] | null>(null);
-  // const [webcamDevices, setWebcamDevices] = createSignal<MediaDeviceInfo[] | null>(null);
+    const [microphone, set_microphone] = createSignal<string | null>(null);
+    const [speaker, set_speaker] = createSignal<string | null>(null);
+    const [screen, set_screen] = createSignal<string | null>(null);
 
-  // const [selectedWebcamDevice, selectWebcamDevice] = createSignal<MediaDeviceInfo | null>(null);
+    const [model, set_model] = createSignal<number>(0);
+    const [model_state, set_model_state] = createSignal(ModelState.Stopped);
+    const [model_download_progress, set_model_download_progress] = createSignal(
+        0,
+    );
 
-  const [recording, setRecording] = createSignal<RecordingState | null>(RecordingState.Stopped);
+    const [language, set_language] = createSignal("auto");
 
-  const [screenStream, setScreenStream] = createSignal<MediaStream | null>(null);
-  const [webcamStream, setWebcamStream] = createSignal<MediaStream | null>(null);
+    const [recording_state, set_recording_state] = createSignal(
+        RecorderState.Stopped,
+    );
 
-  const [recordScreen, setRecordScreen] = createSignal<boolean>(true);
-  
-  const [screenRecorder, setScreenRecorder] = createSignal<MediaRecorder | null>(null);
-  const [webcamRecorder, setWebcamRecorder] = createSignal<MediaRecorder | null>(null);
+    const [microphones] = createInvokeResource<DeviceResult[]>("list_microphone");
+    const [speakers] = createInvokeResource<DeviceResult[]>("list_speaker");
+    const [screens] = createInvokeResource<DeviceResult[]>("list_screen");
 
-  // const [screenBuffer, setScreenBuffer] = createSignal<Uint8Array>(new Uint8Array());
-  // const [audioBuffer, setAudioBuffer] = createSignal<Uint8Array>(new Uint8Array());
+    const [general_config, { refetch: update_general_config }] =
+        createInvokeResource<GeneralConfig>("get_general_config");
+    const [smtp_config, { refetch: update_smtp_config }] = createInvokeResource<
+        SMTPConfig
+    >("get_smtp_config");
 
-  const [models, setModels] = createSignal<Model[] | null>(null);
-  const [selectedModel, selectModel] = createSignal<Model | null>(null);
+    const [transcription_email_to, set_transcription_email_to] = createSignal("");
 
-  const [language, setLanguage] = createSignal("auto");
+    const [models, { refetch: update_models }] = createInvokeResource<Model[]>(
+        "list_model",
+    );
 
-  const [modelDownloadState, setModelDownloadState] = createSignal<DownloadState>(DownloadState.Stopped);
-  const [modelDownloadProgress, setModelDownloadProgress] = createSignal<number>(0);
-  
-  const [ffmpegDownloadState, setFFmpegDownloadState] = createSignal<FFmpegDownloadState>(FFmpegDownloadState.Stopped);
-  const [ffmpegDownloadProgress, setFFmpegDownloadProgress] = createSignal<number>(0);
+    createEffect(() => invoke("select_microphone", { deviceName: microphone() }));
+    createEffect(() => invoke("select_speaker", { deviceName: speaker() }));
+    createEffect(() => invoke("select_screen", { deviceName: screen() }));
 
-  const [systemLog, setSystemLog] = createSignal<string>("");
+    createEffect(() => invoke("select_model", { model: model() }))
+    createEffect(() => invoke("select_language", { language: language() }));
 
-  const [transcribeState, setTranscribeState] = createSignal<TranscribeState>(TranscribeState.Stopped);
-  const [transcribeProgress, setTranscribeProgress] = createSignal<number>(0);
-
-  appWindow.listen<EventResult>("ffmpeg://download", (event) => {
-    let type = event.payload.type;
-
-    switch (type) {
-      case "start": {
-        setFFmpegDownloadState(FFmpegDownloadState.Downloading);
-      } break;
-      case "progress": {
-        let progress = parseInt(event.payload.value);
-
-        setFFmpegDownloadProgress(progress);
-      } break;
-      case "extracting": {
-        setFFmpegDownloadState(FFmpegDownloadState.Extracting);
-      } break;
-      case "stop": {
-        setFFmpegDownloadState(FFmpegDownloadState.Stopped);
-      } break;
+    async function set_general_config(config: GeneralConfig) {
+        await invoke("set_general_config", { generalConfig: config });
+        update_general_config();
     }
-  });
 
-  async function loadModels() {
-    setModels(null);
+    createEffect(() => {
+        let config = untrack(general_config)!;
 
-    const models = await invoke("load_model_list") as Model[];
-    selectModel(models[0]);
+        config.transcription_email_to = transcription_email_to();
 
-    setModels(models);
-  }
-  loadModels();
-
-  createEffect(() => {
-    const modelIndex = models()?.indexOf(selectedModel()!);
-    if (modelIndex === undefined) return;
-
-    (async () => {
-      await invoke("switch_model", { modelIndex });
-    })();
-  });
-
-  createEffect(() => {
-    (async () => {
-      await invoke("switch_language", { language: language() });
-    })();
-  })
-
-  appWindow.listen<EventResult>("app://update-state", (event) => {
-    let type = event.payload.type;
-
-    switch (type) {
-      case "download-ffmpeg": {
-        setAppState(AppState.DownloadingFFmpeg);
-      } break;
-      case "download-model": {
-        setAppState(AppState.DownloadingModel);
-      } break;
-      case "process-audio": {
-        setAppState(AppState.ProcessingAudio);
-      } break;
-      case "process-video": {
-        setAppState(AppState.ProcessingVideo);
-      } break;
-      case "transcribing": {
-        setAppState(AppState.Transcribing);
-      } break;
-      case "nothing": {
-        setAppState(AppState.Nothing);
-      } break;
-    }
-  });
-
-  appWindow.listen<EventResult>("update-state", (event) => {
-    let type = event.payload.type;
-
-    switch (type) {
-      case "transcribe-start": {
-        setTranscribeState(TranscribeState.Transcribing);
-      } break;
-      // FIXME: look at "FIXME: TRANSCRIBE-PROGRESS" at src-tauri
-      case "transcribe-progress": {
-        let progress = parseInt(event.payload.value);
-
-        setTranscribeProgress(progress);
-      } break;
-      case "transcribe-stop": {
-        setTranscribeState(TranscribeState.Stopped);
-      } break;
-    }
-  });
-
-  async function downloadModel() {
-    const model = selectedModel();
-    if (model === null) return;
-
-    const channel_name = await invoke("download_model", { modelIndex: models()?.indexOf(model) }) as string;
-
-    console.log({ channel_name });
-
-    setModelDownloadState(DownloadState.Downloading);
-
-    appWindow.listen<EventResult>(channel_name, (event) => {
-      let type = event.payload.type;
-
-      switch (type) {
-        case "error": {
-          setModelDownloadState(DownloadState.Error);
-          setSystemLog((log) => log + "\n" + event.payload.value);
-        } break;
-        case "progress": {
-          let progress = parseInt(event.payload.value);
-      
-          setModelDownloadProgress(progress);
-        } break;
-        case "done": {
-          setModelDownloadState(DownloadState.Stopped);
-          loadModels();
-        } break;
-      }
-    })
-  }
-
-  async function loadDeviceTypes() {
-    setDeviceTypes(null);
-
-    const deviceTypes = await invoke("list_device_types") as string[];
-
-    deviceTypes.forEach(async (deviceType, deviceTypeIndex) => {
-      const dvcs = await invoke("list_devices", { deviceTypeIndex }) as DeviceResult[];
-
-      dvcs
-        .forEach((dvcs, deviceIndex) => {
-          if (!dvcs.is_selected) return;
-          selectedDevice.set(deviceType, deviceIndex);
-
-          createEffect(() =>
-            invoke("select_device", { deviceTypeIndex, deviceIndex: selectedDevice.get(deviceType) })
-          );
-        });
-
-      devices.set(deviceType, dvcs);
+        set_general_config(config);
     });
 
-    setDeviceTypes(deviceTypes);
-  }
-  loadDeviceTypes();
+    async function update_transcription_save_path_with(path: string) {
+        let config = general_config()!;
 
-  // async function listWebcamDevices() {
-  //   setWebcamDevices(null);
+        config.transcription.save_path_histories.push(path);
 
-  //   const devices = await navigator.mediaDevices.enumerateDevices();
+        config.transcription.save_path_histories = [
+            ...new Set([
+                ...config.transcription.save_path_histories,
+            ]),
+        ];
+        config.transcription.save_path = path;
 
-  //   setWebcamDevices(devices.filter((v) => v.kind === "videoinput"));
-  // }
+        set_general_config(config);
+    }
 
-  // function reloadDevices() {
-    // listWebcamDevices();
-  // }
-  // reloadDevices();
+    async function update_transcription_save_path() {
+        let result = await dialog.open({
+            multiple: false,
+            directory: true,
+            title: "Choose new transcription save location",
+        });
 
-  async function startRecording() {
-    setRecording(null);
+        let path = result as string ?? null;
 
-    await invoke("start_device_record", { recordScreen: recordScreen() });
+        if (path === null) return;
 
-    setRecording(RecordingState.Recording);
-  }
+        update_transcription_save_path_with(path);
+    }
 
-  async function pauseRecording() {
-    setRecording(null);
+    async function update_video_save_path_with(path: string) {
+        let config = general_config()!;
 
-    await invoke("pause_device_record");
+        config.video.save_path_histories.push(path);
 
-    setRecording(RecordingState.Paused);
-  }
+        config.video.save_path_histories = [
+            ...new Set([
+                ...config.video.save_path_histories,
+            ]),
+        ];
+        config.video.save_path = path;
 
-  async function resumeRecording() {
-    setRecording(null);
+        set_general_config(config);
+    }
 
-    await invoke("resume_device_record");
+    async function update_video_save_path() {
+        let result = await dialog.open({
+            multiple: false,
+            directory: true,
+            title: "Choose new transcription save location",
+        });
 
-    setRecording(RecordingState.Recording);
-  }
+        let path = result as string ?? null;
 
-  async function stopRecording() {
-    setRecording(null);
+        if (path === null) return;
 
-    await invoke("stop_device_record");
+        update_video_save_path_with(path);
+    }
 
-    setRecording(RecordingState.Stopped);
-  }
+    function push_notification(element: JSX.Element): number {
+        let index = notification().length;
+        set_notification((p) => [...p, element]);
+        return index;
+    }
 
-  return (
-    <>
-      <Show
-        when={appState() !== AppState.Nothing}
-        fallback={<></>}
-      >
-        <div class="absolute flex text-white justify-center items-center w-screen h-screen">
-          <div class="z-0 absolute w-screen h-screen bg-black bg-opacity-50"></div>
-          <div class="z-20 flex flex-col items-center gap-5">
-            <Switch>
-              <Match when={appState() === AppState.Transcribing}>
-                <h1 class="text-5xl font-bold">Transribing</h1>
-                <span>Please wait till the subtitle is generated</span>
-              </Match>
-              <Match when={appState() === AppState.ProcessingAudio}>
-                <h1 class="text-5xl font-bold">Processing audio</h1>
-                <span>&#8203;</span>
-              </Match>
-              <Match when={appState() === AppState.ProcessingVideo}>
-                <h1 class="text-5xl font-bold">Processing video</h1>
-                <span>&#8203;</span>
-              </Match>
-              <Match when={appState() === AppState.DownloadingFFmpeg}>
-                <h1 class="text-5xl font-bold">Downloading FFmpeg</h1>
-                <span class="bg-gray-800 w-full text-center self-start" style={`background: linear-gradient(90deg, rgba(50,200,133,1) ${ffmpegDownloadProgress()}%, rgb(26,28,29) ${ffmpegDownloadProgress()}%);`}>{ffmpegDownloadProgress()} %</span>
-              </Match>
-              <Match when={appState() === AppState.DownloadingModel}>
-                <h1 class="text-5xl font-bold">Downloading Model</h1>
-                <span class="bg-gray-800 w-full text-center self-start" style={`background: linear-gradient(90deg, rgba(50,200,133,1) ${modelDownloadProgress()}%, rgb(26,28,29) ${modelDownloadProgress()}%);`}>{modelDownloadProgress()} %</span>
-              </Match>
-            </Switch>
-          </div>
-        </div>
-      </Show>
-      <main class="w-screen h-screen p-2 flex flex-col gap-5 justify-evenly">
-        <div class="flex flex-col gap-1">
-          <label class="font-bold my-0">Transcribing Accuracy</label>
-          <span class="text-xs">More resources are needed for better accuracy</span>
-          <select class="border p-1 text-xs w-full" id="model-list" disabled={models() === null} onchange={(e) => selectModel(models()?.[parseInt(e.target.value)] ?? null)}>
-            <Show
-              when={models() !== null}
-              fallback={<option>Loading available model</option>}
-            >
-              <For each={models()}>{(model, i) => 
-                <option value={i().toString()}>{model.name}</option>
-              }</For>
+    function delete_notification(index: number) {
+        set_notification((p) => {
+            let n = Array.from(p);
+            delete n[index];
+            return n;
+        });
+    }
+
+    function on_email_configuration_click() {
+        set_popup(EmailConfigurator({
+            on_save: function() {
+                update_smtp_config();
+                set_popup(null);
+            },
+        }));
+    }
+
+    const recording = {
+        start: async function() {
+            await invoke("start_record");
+
+            set_recording_state(RecorderState.Running);
+        },
+        stop: async function() {
+            await invoke("stop_record");
+
+            set_recording_state(RecorderState.Stopped);
+        },
+        pause: async function() {
+            await invoke("pause_record");
+
+            set_recording_state(RecorderState.Paused);
+        },
+        resume: async function() {
+            await invoke("resume_record");
+
+            set_recording_state(RecorderState.Running);
+        },
+    };
+
+    appWindow.listen<"start" | "pause" | "stop">(
+        "app://recording_state",
+        (event) => {
+            switch (event.payload) {
+                case "start":
+                    set_recording_state(RecorderState.Running);
+                    break;
+                case "stop":
+                    set_recording_state(RecorderState.Stopped);
+                    break;
+                case "pause":
+                    set_recording_state(RecorderState.Paused);
+                    break;
+            }
+        },
+    );
+
+    appWindow.listen<EventResult>("app://notification", (event) => {
+        let idx = -1;
+
+        switch (event.payload.type) {
+            case "error":
+                idx = push_notification(
+                    NotificationError({ title: "Error", message: event.payload.value }),
+                );
+
+                break;
+            case "info":
+                idx = push_notification(
+                    NotificationInfo({ title: "Info", message: event.payload.value }),
+                );
+
+                break;
+        }
+
+        setTimeout(() => delete_notification(idx), 10000);
+    });
+
+
+    appWindow.listen<string>("app://transcriber_start", (event) => {
+        const transciption_uuid = event.payload;
+
+        function Element() {
+            return (
+                <div onClick={(e) => e.stopPropagation()} class="cursor-default">
+                    <NotificationInfo
+                        title="Info"
+                        message={`${transciption_uuid}: Transcribing, please don't close the app`}
+                    />
+                </div>
+            );
+        }
+
+        const notification_id = push_notification(Element());
+        const unlisten = appWindow.listen<EventResult>(
+            event.payload,
+            async (event) => {
+                switch (event.payload.type) {
+                    case "finish":
+                        delete_notification(notification_id);
+
+                        let idx = push_notification(NotificationInfo({ title: "Info", message: `${transciption_uuid}: Transcription is saved at\n${event.payload.value}` }));
+
+                        setTimeout(() => delete_notification(idx), 10000);
+
+                        await unlisten;
+                        break;
+                }
+            },
+        );
+    });
+
+    async function download_selected_model() {
+        if (model() === null) return;
+
+        set_model_state(ModelState.Downloading);
+
+        const channel_name = await invoke("download_model", {
+            modelIndex: model(),
+        }) as string;
+
+        appWindow.listen<EventResult>(channel_name, (event) => {
+            switch (event.payload.type) {
+                case "progress":
+                    set_model_download_progress(parseInt(event.payload.value));
+
+                    break;
+                case "done":
+                    set_model_state(ModelState.Stopped);
+                    update_models();
+                    break;
+            }
+        });
+    }
+
+    return (
+        <main class="flex flex-col h-screen justify-start">
+            <Show when={popup()} keyed>
+                {(popup) => (
+                    <div
+                        onClick={() => {
+                            set_popup(null);
+                        }}
+                        class="fixed flex justify-center items-center w-screen h-screen bg-black bg-opacity-50"
+                    >
+                        <div
+                            class="bg-white sm:w-2/3 lg:w-1/2 h-2/3 rounded overflow-y-scroll"
+                            onClick={(event) => event.stopPropagation()}
+                        >
+                            {popup}
+                        </div>
+                    </div>
+                )}
             </Show>
-          </select>
-        </div>
-        <div class="flex flex-col gap-1">
-        <label class="font-bold my-0">Language</label>
-          <select class="border p-1 text-xs w-full" id="language-list" onchange={(e) => setLanguage(e.target.value)}>
-            <option value="auto">Auto</option>
-            <For each={languages}>{([display, id]) => 
-              <option value={id}>{display}</option>
-            }</For>
-          </select>
-        </div>
-        <div class="flex flex-col gap-1">
-          <For each={deviceTypes()}>{(name) => 
-            <div class="flex gap-1">
-              <label class="font-bold w-32" for={`"${name}-devices"`}>{name}</label>
-              <select class="border p-1 text-xs w-full" id={`"${name}-devices"`} disabled={devices.get(name) === undefined} onchange={(e) => selectedDevice.set(name, parseInt(e.target.value) ?? undefined)}>
-                <Show
-                  when={devices.get(name) !== undefined}
-                  fallback={<option>Loading {name.toLocaleLowerCase()} devices</option>}
-                >
-                  <For each={devices.get(name)}>{(device, i) => 
-                    <option value={i().toString()} selected={device.is_selected}>{device.name}</option>
-                  }</For>
-                </Show>
-              </select>
+            <div class="fixed flex flex-col gap-1 right-0 m-3 [&>div]:min-w-56">
+                <For each={notification()}>
+                    {(element, i) => (
+                        <Show when={element}>
+                            <div
+                                class="cursor-pointer"
+                                onClick={() => delete_notification(i())}
+                            >
+                                {element}
+                            </div>
+                        </Show>
+                    )}
+                </For>
             </div>
-          }</For>
-          {/* <div class="flex gap-1">
-            <label class="font-bold w-32" for="input-devices">Microphone</label>
-            <select class="border p-1 text-xs w-full" id="input-devices" disabled={inputDevices() === null} onchange={(e) => changeChosenInputDevice(parseInt(e.target.value) || 0)}>
-              <Show
-                when={inputDevices() !== null}
-                fallback={<option>Loading input devices</option>}
-              >
-                <For each={inputDevices()}>{(device, i) => 
-                  <option value={i().toString()}>{device}</option>
-                }</For>
-              </Show>
-            </select>
-          </div>
-          <div class="flex gap-1">
-            <label class="font-bold w-32" for="output-devices">System sound</label>
-            <select class="border p-1 text-xs w-full" id="output-devices" disabled={outputDevices() === null} onchange={(e) => changeChosenOutputDevice(parseInt(e.target.value) || 0)}>
-              <Show
-                when={outputDevices() !== null}
-                fallback={<option>Loading output devices</option>}
-              >
-                <For each={outputDevices()}>{(device, i) => 
-                  <option value={i().toString()}>{device}</option>
-                }</For>
-              </Show>
-            </select>
-          </div>
-          <div class="flex gap-1">
-            <label class="font-bold w-32" for="camera-devices">Camera</label>
-            <select class="border p-1 text-xs w-full" id="camera-devices" disabled={webcamDevices() === null} onchange={(e) => selectWebcamDevice(webcamDevices()?.[parseInt(e.target.value) || 0] ?? null)}>
-              <Show
-                when={webcamDevices() !== null}
-                fallback={<option>Loading camera devices</option>}
-              >
-                <For each={webcamDevices()}>{(device, i) => 
-                  <option value={i().toString()}>{device.label}</option>
-                }</For>
-              </Show>
-            </select>
-          </div> */}
-          {/* <button class="border py-2 cursor-pointer" onclick={reloadDevices}>Reload devices</button> */}
-          <div class="flex gap-2">
-            <div class="flex gap-1">
-              <input checked={recordScreen()} onchange={(e) => setRecordScreen(e.currentTarget.checked)} type="checkbox" id="enable-screen-record" value="Bike"></input>
-              <label class="text-sm" for="enable-screen-record">Record screen</label>
+            <div class="m-2">
+                <h2 class="text-xl font-bold h-fit">Device Configuration</h2>
+                <hr class="my-2" />
+                <div class="flex flex-col gap-1">
+                    <section class="flex items-center gap-2">
+                        <h3 class="text-sm font-bold my-0 h-fit w-32">Microphone</h3>
+                        <select
+                            class="border p-1 text-xs w-full"
+                            disabled={microphones.loading}
+                            onchange={(e) => set_microphone(e.target.value)}
+                        >
+                            <Suspense>
+                                <For each={microphones()!}>
+                                    {(device) => (
+                                        <option value={device.name} selected={device.is_selected}>
+                                            {device.name}
+                                        </option>
+                                    )}
+                                </For>
+                            </Suspense>
+                        </select>
+                    </section>
+                    <section class="flex items-center gap-2">
+                        <h3 class="text-sm font-bold my-0 h-fit w-32">Speaker</h3>
+                        <select
+                            class="border p-1 text-xs w-full"
+                            disabled={speakers.loading}
+                            onchange={(e) => set_speaker(e.target.value)}
+                        >
+                            <Suspense>
+                                <For each={speakers()!}>
+                                    {(device) => (
+                                        <option value={device.name} selected={device.is_selected}>
+                                            {device.name}
+                                        </option>
+                                    )}
+                                </For>
+                            </Suspense>
+                        </select>
+                    </section>
+                    <section class="flex items-center gap-2">
+                        <h3 class="text-sm font-bold my-0 h-fit w-32">Screen</h3>
+                        <select
+                            class="border p-1 text-xs w-full"
+                            disabled={screens.loading}
+                            onchange={(e) => set_screen(e.target.value)}
+                        >
+                            <Suspense>
+                                <For each={screens()!}>
+                                    {(device) => (
+                                        <option value={device.name} selected={device.is_selected}>
+                                            {device.name}
+                                        </option>
+                                    )}
+                                </For>
+                            </Suspense>
+                        </select>
+                    </section>
+                </div>
             </div>
-          </div>
-        </div>
-        <div class="flex flex-col gap-[0.125rem]">
-          <span class="text-xs">System log</span>
-          <textarea class="border resize-none font-mono text-xs" name="" id="" cols="30" rows="10" value={systemLog()} disabled></textarea>
-        </div>
-        <div class="flex flex-col gap-1">
-          <Show
-            when={selectedModel() !== null}
-            fallback={<span class="text-center text-xs">&#8203;</span>}
-          >
-            <span class="text-center text-xs">Will use at least {selectedModel()?.mem_usage} MB of RAM when transcribing</span>
-          </Show>
-          <div class="w-full flex gap-1">
-            <Show
-              when={selectedModel()?.is_downloaded}
-              fallback={
-                <Switch
-                  fallback={<></>}
-                >
-                  <Match when={[DownloadState.Stopped, DownloadState.Error].includes(modelDownloadState())}>
-                    <button class="border py-2 cursor-pointer w-full" onclick={downloadModel}>Download model</button>
-                  </Match>
-                  <Match when={[DownloadState.Downloading].includes(modelDownloadState())}>
-                    <button class="border py-2 cursor-pointer w-full" disabled onclick={downloadModel}>Downloading model {modelDownloadProgress()}%</button>
-                  </Match>
-                </Switch>
-              }
-            >
-              <Switch fallback={
-                <button class="border py-2 cursor-pointer w-full" disabled={true}>Loading</button>
-              }>
-                <Match when={[FFmpegDownloadState.Downloading].includes(ffmpegDownloadState())}>
-                  <button class="border py-2 cursor-pointer w-full" disabled onclick={downloadModel}>Downloading FFmpeg {ffmpegDownloadProgress()}%</button>
-                </Match>
-                <Match when={[FFmpegDownloadState.Extracting].includes(ffmpegDownloadState())}>
-                  <button class="border py-2 cursor-pointer w-full" disabled onclick={downloadModel}>Extracting FFmpeg</button>
-                </Match>
-                <Match when={recording() === RecordingState.Stopped}>
-                  <Switch
-                    fallback={
-                      <button class="border py-2 cursor-pointer w-full" onclick={startRecording}>Record</button>
-                    }
-                  >
-                    <Match when={transcribeState() === TranscribeState.Transcribing}>
-                      <button class="border py-2 cursor-pointer w-full" disabled>Transribing</button>
+            <div class="m-2">
+                <h2 class="text-xl font-bold h-fit">Transcriber Configuration</h2>
+                <hr class="my-2" />
+                <div class="flex flex-col gap-1">
+                    <section class="flex items-center gap-2">
+                        <h3 class="text-sm font-bold my-0 h-fit w-32">Model</h3>
+                        <div class="flex flex-col w-full">
+                            <select
+                                class="border p-1 text-xs w-full"
+                                onchange={(e) => set_model(parseInt(e.target.value))}
+                            >
+                                <Suspense>
+                                    <For each={models()!}>
+                                        {(m, i) => (
+                                            <option value={i()} selected={i() === model()}>
+                                                {m.name}
+                                            </option>
+                                        )}
+                                    </For>
+                                </Suspense>
+                            </select>
+                            <Suspense>
+                                <Show
+                                    when={model() !== null && !models()?.[model()!].is_downloaded}
+                                >
+                                    <Switch>
+                                        <Match when={model_state() === ModelState.Downloading}>
+                                            <button
+                                                class="border rounded py-2 text-xs"
+                                                disabled
+                                            >
+                                                Downloading %{model_download_progress()}
+                                            </button>
+                                        </Match>
+                                        <Match when={model_state() === ModelState.Stopped}>
+                                            <button
+                                                class="border rounded py-2 cursor-pointer text-xs"
+                                                onclick={download_selected_model}
+                                            >
+                                                Download
+                                            </button>
+                                        </Match>
+                                    </Switch>
+                                </Show>
+                            </Suspense>
+                        </div>
+                    </section>
+                    <section class="flex items-center gap-2">
+                        <h3 class="text-sm font-bold my-0 h-fit w-32">Language</h3>
+                        <select
+                            class="border p-1 text-xs w-full"
+                            onchange={(e) => set_language(e.target.value)}
+                        >
+                            <option value="auto">Auto</option>
+                            <For each={languages}>
+                                {([display, id]) => <option value={id}>{display}</option>}
+                            </For>
+                        </select>
+                    </section>
+                </div>
+            </div>
+            <div class="m-2">
+                <h2 class="text-xl font-bold h-fit">General Configuration</h2>
+                <hr class="my-2" />
+                <div class="flex flex-col gap-1">
+                    <section class="flex items-center gap-2">
+                        <h3 class="text-sm font-bold my-0 h-fit w-52">
+                            Save Transcription To
+                        </h3>
+                        <div class="flex flex-col w-full">
+                            <select
+                                class="border p-1 text-xs w-full"
+                                onchange={(e) =>
+                                    update_transcription_save_path_with(e.target.value)}
+                            >
+                                <Show when={general_config() !== undefined}>
+                                    <For
+                                        each={general_config()!.transcription.save_path_histories}
+                                    >
+                                        {(path) => (
+                                            <option
+                                                value={path}
+                                                selected={general_config()!.transcription.save_path ===
+                                                    path}
+                                            >
+                                                {path}
+                                            </option>
+                                        )}
+                                    </For>
+                                </Show>
+                            </select>
+                            <button
+                                onclick={update_transcription_save_path}
+                                class="border rounded py-2 cursor-pointer text-xs"
+                            >
+                                Browse
+                            </button>
+                        </div>
+                    </section>
+                    <section class="flex items-center gap-2">
+                        <h3 class="text-sm font-bold my-0 h-fit w-52">
+                            Save Video To
+                        </h3>
+                        <div class="flex flex-col w-full">
+                            <select
+                                class="border p-1 text-xs w-full"
+                                onchange={(e) => update_video_save_path_with(e.target.value)}
+                            >
+                                <Show when={general_config() !== undefined}>
+                                    <For
+                                        each={general_config()!.video.save_path_histories}
+                                    >
+                                        {(path) => (
+                                            <option
+                                                value={path}
+                                                selected={general_config()!.video.save_path ===
+                                                    path}
+                                            >
+                                                {path}
+                                            </option>
+                                        )}
+                                    </For>
+                                </Show>
+                            </select>
+                            <button
+                                onclick={update_video_save_path}
+                                class="border rounded py-2 cursor-pointer text-xs"
+                            >
+                                Browse
+                            </button>
+                        </div>
+                    </section>
+                    <section class="flex items-center gap-2">
+                        <h3 class="text-sm font-bold my-0 h-fit w-52">
+                            Email Transcription To
+                        </h3>
+                        <div class="flex flex-col w-full">
+                            <span class="absolute text-xs ml-1 mb-[-7px] px-2 z-30 bg-white w-fit text-red-800">
+                            </span>
+                            <input
+                                type="text"
+                                class="border rounded p-2 text-xs disabled:bg-gray-50 mt-2"
+                                onchange={(event) => {
+                                    set_transcription_email_to(event.currentTarget.value);
+                                }}
+                                placeholder="email@example.com"
+                                value={smtp_config()?.host
+                                    ? general_config()?.transcription_email_to
+                                    : "SMTP server is not configured"}
+                                disabled={!smtp_config()?.host}
+                            />
+                            <button
+                                onClick={on_email_configuration_click}
+                                class="border rounded py-2 cursor-pointer text-xs"
+                            >
+                                Configure
+                            </button>
+                        </div>
+                    </section>
+                </div>
+            </div>
+            <div class="w-full h-full flex items-end">
+                <Switch>
+                    <Match when={model() !== null && !models()?.[model()!].is_downloaded}>
+                        <button
+                            class="w-full h-full max-h-[3rem] border border-x-transparent font-bold p-2 cursor-default"
+                            disabled
+                        >
+                            The model hasn't been downloaded
+                        </button>
                     </Match>
-                  </Switch>
-                </Match>
-                {/* <Match when={recording() === RecordingState.Paused}>
-                  <button class="border py-2 cursor-pointer w-full" onclick={resumeRecording}>Resume</button>
-                </Match> */}
-                <Match when={recording() === RecordingState.Recording}>
-                  {/* <button class="border py-2 cursor-pointer w-full" onclick={pauseRecording}>Pause</button> */}
-                  <button class="border py-2 cursor-pointer w-full" onclick={stopRecording}>Stop</button>
-                </Match>
-              </Switch>
-            </Show>
-          </div>
-        </div>
-      </main>
-    </>
-  );
+                    <Match when={recording_state() === RecorderState.Stopped}>
+                        <button
+                            onclick={recording.start}
+                            class="w-full h-full max-h-[3rem] border border-x-transparent font-bold p-2 cursor-pointer"
+                        >
+                            Start Recording
+                        </button>
+                    </Match>
+                    <Match when={recording_state() === RecorderState.Paused}>
+                        <button
+                            onclick={recording.resume}
+                            class="w-full h-full max-h-[3rem] border border-x-transparent font-bold p-2 cursor-pointer"
+                        >
+                            Resume Recording
+                        </button>
+                    </Match>
+                    <Match when={recording_state() === RecorderState.Running}>
+                        <button
+                            onclick={recording.stop}
+                            class="w-full h-full max-h-[3rem] border border-x-transparent font-bold p-2 cursor-pointer"
+                        >
+                            Stop Recording
+                        </button>
+                    </Match>
+                </Switch>
+            </div>
+        </main>
+    );
 }
 
 export default App;

@@ -27,6 +27,11 @@ gst = { version = "0.22.5", package = "gstreamer", features = ["v1_24"] }
 gst_app = { version = "0.22.0", package = "gstreamer-app", features = ["v1_24"] }
 gst-plugin-fallbackswitch = "0.12.4"
 byte-slice-cast = "1.2.2"
+dialog = "0.3.0"
+bincode = "1.3.3"
+keyring = "2.3.3"
+chrono = "0.4.38"
+lettre = "0.11.7"
 
 [features]
 # this feature is used for production builds or when `devPath` points to the filesystem

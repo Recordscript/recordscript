@@ -1,95 +1,153 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::{collections::HashMap, fs::File, io::Write, process, sync::{atomic::{self, AtomicBool, AtomicPtr}, Arc, Mutex}, thread, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
+use std::{collections::HashMap, fs::File, io::Write, ops::{Deref, DerefMut}, process, sync::{atomic::{self, AtomicBool, AtomicPtr}, Arc, Mutex}, thread, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
 
+use anyhow::{Context, Result};
 use cpal::{traits::{DeviceTrait, HostTrait, StreamTrait}, Device, Host};
+use dialog::DialogBox;
 use directories::ProjectDirs;
 use recorder::DeviceEq as _;
 use scrap::{TraitCapturer, TraitPixelBuffer};
+use serde::{Deserialize, Serialize};
 use strum::IntoEnumIterator;
-use tauri::{api::dialog, async_runtime::channel, Manager, State, Window};
-use gst::prelude::*;
+use tauri::{async_runtime::channel, Manager, State, Window};
+use gst::{glib::uuid_string_random, prelude::*};
 
 use crate::util::{gstreamer_loop, replace_multiple_whitespace};
 
+pub mod configuration;
 mod recorder;
 mod transcriber;
 mod util;
 
+type SelectedDevice = Arc<Mutex<recorder::SelectedDevice>>;
+type RecordChannel = tauri::async_runtime::Sender<recorder::RecordCommand>;
+
+type GeneralConfig = Arc<Mutex<configuration::GeneralConfig>>;
+type SMTPConfig = Arc<Mutex<configuration::SMTPConfig>>;
+
 #[tauri::command]
-fn list_device_types() -> Vec<&'static str> {
-    recorder::DeviceType::iter()
-        .map(|d| d.into() )
+fn list_microphone(selected_device: State<'_, SelectedDevice>) -> Vec<recorder::DeviceResult> {
+    let default_device = &selected_device.lock().unwrap().microphone;
+
+    recorder::list_microphone().into_iter()
+        .filter(|device| device.name().is_ok())
+        .map(|device| 
+            recorder::DeviceResult {
+                name: device.name().unwrap(),
+                is_selected: device.eq_device(&default_device),
+            })
         .collect()
 }
 
 #[tauri::command]
-fn list_devices(host: State<Host>, selected_devices: State<Mutex<recorder::SelectedDevices<Device> >>, device_type_index: usize) -> Vec<recorder::DeviceResult>  {
-    let device_type = recorder::DeviceType::iter().nth(device_type_index).expect("Can't find specified device type");
+fn list_speaker(selected_device: State<'_, SelectedDevice>) -> Vec<recorder::DeviceResult> {
+    let default_device = &selected_device.lock().unwrap().speaker;
 
-    let selected_devices = selected_devices.lock().unwrap();
-    let selected_device = selected_devices.0.get(&device_type).expect("Can't get the default devices");
-
-    let devices = match device_type {
-        recorder::DeviceType::Microphone => host.input_devices(),
-        recorder::DeviceType::Speaker => host.output_devices(),
-    }.expect("Can't query device list");
-
-    devices
-        .map(|d| {
-            let name = d.name().unwrap_or(String::from("Unknown device"));
-            let is_selected = d.eq_device(selected_device);
-
-            recorder::DeviceResult { name, is_selected }
-        })
+    recorder::list_speaker().into_iter()
+        .map(|device| 
+            recorder::DeviceResult {
+                name: device.name().unwrap_or("Unkown device".to_owned()),
+                is_selected: device.eq_device(&default_device)
+            })
         .collect()
 }
 
 #[tauri::command]
-fn select_device(host: State<Host>, selected_devices: State<Mutex<recorder::SelectedDevices<Device>>>, device_type_index: usize, device_index: Option<usize>) {
-    let device_type = recorder::DeviceType::iter().nth(device_type_index).expect("Can't find specified device type");
+fn list_screen(selected_device: State<'_, SelectedDevice>) -> Vec<recorder::DeviceResult> {
+    // let default_device = selected_device.lock().unwrap().
 
-    let mut devices = match device_type {
-        recorder::DeviceType::Microphone => host.input_devices(),
-        recorder::DeviceType::Speaker => host.output_devices(),
-    }.expect("Can't query device list");
-
-    let device = devices.nth(device_index.expect("Selected device is invalid")).expect("Can't find the specified device");
-
-    println!("Updating {device_type:?} to {}", device.name().unwrap());
-
-    let mut selected_devices = selected_devices.lock().unwrap();
-    selected_devices.0.insert(device_type, device);
+    recorder::list_screen().unwrap_or_default().into_iter()
+        .enumerate()
+        .map(|(index, screen)|
+            recorder::DeviceResult {
+                name: screen.name(),
+                is_selected: index == 0
+            })
+        .collect()
 }
 
 #[tauri::command]
-async fn start_device_record(selected_devices: State<'_, Mutex<recorder::SelectedDevices<Device>>>, record_channel: State<'_, recorder::RecordChannel>, record_screen: bool) -> Result<(), ()> {
-    let devices = selected_devices.lock().unwrap().0.clone().into_iter().collect();
+fn select_microphone(selected_device: State<'_, SelectedDevice>, device_name: String) {
+    let device = recorder::list_microphone().into_iter()
+        .filter(|device| device.name().unwrap_or_default() == device_name)
+        .next().unwrap();
+    
+    selected_device.lock().unwrap().microphone = device;
 
-    record_channel.send(
-        recorder::RecordCommand::Start {
-            devices,
-            record_screen,
-        }
-    ).await.unwrap();
+    println!("Switching microphone to {device_name:?}");
+}
+
+#[tauri::command]
+fn select_speaker(selected_device: State<'_, SelectedDevice>, device_name: String) {
+    let device = recorder::list_speaker().into_iter()
+        .filter(|device| device.name().unwrap_or_default() == device_name)
+        .next().unwrap();
+    
+    selected_device.lock().unwrap().speaker = device;
+
+    println!("Switching speaker to {device_name:?}");
+}
+
+#[tauri::command]
+fn select_screen(selected_device: State<'_, SelectedDevice>, device_name: String) {
+    let device = recorder::list_screen().unwrap().into_iter()
+        .filter(|device| device.name() == device_name)
+        .next().unwrap();
+
+    println!("Switching screen to {device_name:?}");
+    
+    selected_device.lock().unwrap().screen = device;
+}
+
+#[tauri::command]
+async fn start_record(selected_device: State<'_, SelectedDevice>, record_channel: State<'_, RecordChannel>) -> Result<(), ()> {
+    let selected_device = selected_device.lock().unwrap().clone();
+    record_channel.send(recorder::RecordCommand::Start(selected_device)).await.unwrap();
 
     Ok(())
 }
 
 #[tauri::command]
-fn pause_device_record(record_channel: State<recorder::RecordChannel>) {
+fn pause_record(record_channel: State<RecordChannel>) {
     record_channel.try_send(recorder::RecordCommand::Pause).expect("Can't pause recording");
 }
 
 #[tauri::command]
-fn resume_device_record(record_channel: State<recorder::RecordChannel>) {
+fn resume_record(record_channel: State<RecordChannel>) {
     record_channel.try_send(recorder::RecordCommand::Resume).expect("Can't resume recording");
 }
 
 #[tauri::command]
-fn stop_device_record(record_channel: State<recorder::RecordChannel>) {
+fn stop_record(record_channel: State<RecordChannel>) {
     record_channel.try_send(recorder::RecordCommand::Stop).expect("Can't stop recording");
+}
+
+#[tauri::command]
+fn get_general_config(general_config: State<'_, GeneralConfig>) -> configuration::GeneralConfig {
+    general_config.lock().unwrap().clone()
+}
+
+#[tauri::command]
+fn set_general_config(general_config_state: State<'_, GeneralConfig>, general_config: configuration::GeneralConfig) {
+    println!("Saving general config\n{general_config:?}");
+    configuration::save(&general_config);
+
+    *general_config_state.lock().unwrap() = general_config;
+}
+
+#[tauri::command]
+fn get_smtp_config(config: State<'_, SMTPConfig>) -> configuration::SMTPConfig {
+    config.lock().unwrap().clone()
+}
+
+#[tauri::command]
+fn set_smtp_config(config_state: State<'_, SMTPConfig>, config: configuration::SMTPConfig) {
+    println!("Saving general config\n{config:?}");
+    configuration::save(&config);
+
+    *config_state.lock().unwrap() = config;
 }
 
 fn project_directory() -> ProjectDirs {
@@ -147,23 +205,23 @@ fn download_model(window: Window, model_index: usize) -> String {
 }
 
 #[tauri::command]
-fn switch_language(transcriber: State<'_, Arc<Mutex<transcriber::Transcriber>>>, language: String) {
+fn select_language(transcriber: State<'_, Arc<Mutex<transcriber::Transcriber>>>, language: String) {
     println!("Switching language to {language}");
 
     transcriber.lock().unwrap().change_language(language);
 }
 
 #[tauri::command]
-fn switch_model(transcriber: State<'_, Arc<Mutex<transcriber::Transcriber>>>, model_index: usize) {
-    println!("Switching model to {model_index}");
+fn select_model(transcriber: State<'_, Arc<Mutex<transcriber::Transcriber>>>, model: usize) {
+    println!("Switching model to {model}");
 
-    let model = transcriber::ModelType::iter().nth(model_index).unwrap();
+    let model = transcriber::ModelType::iter().nth(model).unwrap();
 
     transcriber.lock().unwrap().change_model(model);
 }
 
 #[tauri::command]
-fn load_model_list() -> Vec<serde_json::Value> {
+fn list_model() -> Vec<serde_json::Value> {
     transcriber::ModelType::iter()
         .map(|model|
             serde_json::json!({
@@ -181,69 +239,73 @@ fn main() {
 
         eprintln!("{message:?}");
 
-        tauri::Builder::default()
-            .setup(|app| {
-                let mut d_builder = dialog::MessageDialogBuilder::new("App is panicking!", message)
-                    .kind(dialog::MessageDialogKind::Error)
-                    .buttons(dialog::MessageDialogButtons::Ok);
-
-                if let Some(window) = app.get_window("main").as_ref() {
-                    d_builder = d_builder.parent(window);
-                }
-
-                d_builder.show(|_| process::exit(1));
-    
-                Ok(())
-            }).run(tauri::generate_context!()).ok();
+        dialog::Message::new(message)
+            .title("Error")
+            .show().ok();
     }));
 
     gst::init().unwrap();
 
-    let (record_tx, mut record_rx): (recorder::RecordChannel, _) = channel(128);
+    let (record_tx, mut record_rx): (RecordChannel, _) = channel(128);
 
     let transcriber = Arc::new(Mutex::new(transcriber::Transcriber::new(transcriber::ModelType::TinyWhisper)));
 
     let host = cpal::default_host();
 
-    let mut selected_devices = recorder::SelectedDevices(HashMap::new());
+    let selected_device: SelectedDevice = Arc::new(Mutex::new(recorder::SelectedDevice {
+        microphone: host.default_input_device().unwrap(),
+        speaker: host.default_output_device().unwrap(),
+        screen: scrap::Display::all().unwrap().swap_remove(0),
+    }));
 
-    let default_input = host.default_input_device().unwrap();
-    let default_output = host.default_output_device().unwrap();
-
-    selected_devices.0.insert(recorder::DeviceType::Microphone, default_input);
-    selected_devices.0.insert(recorder::DeviceType::Speaker, default_output);
+    let general_config: GeneralConfig = Arc::new(Mutex::new(configuration::GeneralConfig::default()));
+    let smtp_config: SMTPConfig = Arc::new(Mutex::new(configuration::SMTPConfig::default()));
     
     tauri::Builder::default()
-        .manage(Mutex::new(selected_devices))
+        .manage(selected_device)
         .manage(transcriber.clone())
         .manage(record_tx)
         .manage(host)
+        .manage(general_config.clone())
+        .manage(smtp_config.clone())
         .invoke_handler(tauri::generate_handler![
-            start_device_record,
-            pause_device_record,
-            resume_device_record,
-            stop_device_record,
-            load_model_list,
+            start_record,
+            stop_record,
+            pause_record,
+            resume_record,
+            list_model,
             download_model,
-            switch_model,
-            switch_language,
-            list_device_types,
-            list_devices,
-            select_device,
+            select_model,
+            select_language,
+            list_microphone,
+            list_speaker,
+            list_screen,
+            select_microphone,
+            select_speaker,
+            select_screen,
+            get_general_config,
+            set_general_config,
+            get_smtp_config,
+            set_smtp_config,
         ])
         .setup(move |app| {
             let window = app.get_window("main").expect("Can't get the main window");
+            let recorder_control_window = app.get_window("recorder-controller").expect("Can't get the recorder controller window");
+
+            let general_config = general_config.clone();
+            let smtp_config = smtp_config.clone();
             let transcriber = transcriber.clone();
 
             thread::spawn(move || {
                 let mut recorder : Vec<(Arc<AtomicBool>, gst::Pipeline)>= vec![];
                 let media_data = Arc::new(Mutex::new(Vec::<u8>::new()));
+                let mut output_name = String::new();
         
                 loop {
                     let Some(command) = record_rx.blocking_recv() else { continue };
-        
+
                     match command {
-                        recorder::RecordCommand::Start { devices, record_screen } => {
+                        recorder::RecordCommand::Start(selected_device) => {
                             let recording_duration = Instant::now();
 
                             let should_stop = Arc::new(AtomicBool::new(false));
@@ -253,15 +315,20 @@ fn main() {
                             let mut input_callbacks: Vec<(String, gst_app::AppSrcCallbacks)> = Vec::new();
                             let mut audio_streams: Vec<cpal::Stream> = Vec::new();
 
-                            for (index, (device_type, device)) in devices.into_iter().enumerate() {
-                                let config = match device_type {
-                                    recorder::DeviceType::Microphone => device.default_input_config().unwrap(),
-                                    recorder::DeviceType::Speaker { .. } => device.default_output_config().unwrap(),
+                            output_name = format!(
+                                "{date}",
+                                date = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S"));
+
+                            for (index, device) in [selected_device.microphone, selected_device.speaker].into_iter().enumerate() {
+                                let config = match index {
+                                    0 => device.default_input_config().unwrap(),
+                                    1 => device.default_output_config().unwrap(),
+                                    _ => unreachable!(),
                                 };
 
                                 let sample_format = config.sample_format();
 
-                                let audio_input_name = format!("{device_type:?}_{}", device.name().unwrap_or_default());
+                                let audio_input_name = format!("audio_{index:?}_{}", device.name().unwrap_or_default());
 
                                 pipeline_description.push(
                                     format!(
@@ -328,13 +395,13 @@ fn main() {
                                 input_callbacks.push((audio_input_name, audio_input_callbacks));
                             }
 
-                            if record_screen {
-                                let display = scrap::Display::all().unwrap().swap_remove(0);
+                            {
+                                let display = selected_device.screen;
 
                                 let video_input_name = format!("{}", display.name());
 
                                 pipeline_description.push(format!(
-                                    "appsrc name={video_input_name} ! rawvideoparse width={width} height={height} format=8 ! videoconvert ! x264enc tune=zerolatency speed-preset=veryfast ! q. q. ! mux.",
+                                    "appsrc name={video_input_name} ! rawvideoparse width={width} height={height} format=8 ! videoconvert ! x264enc tune=zerolatency speed-preset=veryfast ! video/x-h264,profile=baseline ! q. q. ! mux.",
                                         width = display.width(),
                                         height = display.height(),
                                 ));
@@ -372,7 +439,7 @@ fn main() {
                                 input_callbacks.push((video_input_name, video_input_callbacks));
                             }
 
-                            pipeline_description.push("mp4mux name=mux faststart=true ! appsink name=output".to_string());
+                            pipeline_description.push("mp4mux name=mux ! appsink name=output".to_string());
 
                             println!("Starting pipeline with description: {}", replace_multiple_whitespace(&pipeline_description.join("|")));
 
@@ -388,7 +455,9 @@ fn main() {
                                 source.set_callbacks(callback);
                             }
 
-                            let mut output = File::create("output.mp4").unwrap();
+                            let output_path = general_config.lock().unwrap().video.save_path.join(format!("{output_name}.mp4"));
+
+                            let mut output = File::create(output_path).unwrap();
 
                             pipeline.by_name("output").unwrap().dynamic_cast::<gst_app::AppSink>().unwrap()
                                 .set_callbacks(gst_app::AppSinkCallbacks::builder()
@@ -430,18 +499,25 @@ fn main() {
                             });
     
                             recorder.push((should_stop, pipeline));
+
+                            recorder_control_window.show().unwrap();
+                            window.emit("app://recording_state", "start").unwrap();
                         },
                         recorder::RecordCommand::Pause => {
                             for (_, pipeline) in &recorder {
                                 println!("Pausing pipeline");
                                 pipeline.set_state(gst::State::Paused).unwrap();
                             }
+
+                            window.emit("app://recording_state", "pause").unwrap();
                         },
                         recorder::RecordCommand::Resume => {
                             for (_, pipeline) in &recorder {
                                 println!("Resuming pipeline");
                                 pipeline.set_state(gst::State::Playing).unwrap();
                             }
+
+                            window.emit("app://recording_state", "start").unwrap();
                         },
                         recorder::RecordCommand::Stop => {
                             for (should_stop, pipeline) in &mut recorder {
@@ -452,6 +528,10 @@ fn main() {
                                 }
                             }
 
+                            recorder_control_window.hide().unwrap();
+
+                            window.emit("app://recording_state", "stop").unwrap();
+
                             let mut media_data = media_data.lock().unwrap();
 
                             let mut data = vec![0u8; media_data.len()];
@@ -460,9 +540,17 @@ fn main() {
 
                             recorder.clear();
 
-                            transcriber.lock().unwrap()
-                                .transcribe(&window, data);
+                            let general_config = general_config.lock().unwrap().clone();
 
+                            util::emit_all(&window, "app://notification", serde_json::json!({
+                                "type": "info",
+                                "value": format!("Screen recording is saved at\n{}", general_config.video.save_path.join(format!("{output_name}.mp4")).display())
+                            }));
+
+                            let transcription_path = general_config.transcription.save_path.join(format!("{output_name}.srt"));
+
+                            transcriber.lock().unwrap()
+                                .transcribe(&window, data, general_config, smtp_config.lock().unwrap().clone(), transcription_path);
                         },
                     }
                 }

@@ -2,6 +2,8 @@ use std::{path::PathBuf, sync::{Arc, Mutex}};
 
 use byte_slice_cast::AsSliceOf;
 use directories::ProjectDirs;
+use gst::glib::uuid_string_random;
+use lettre::Transport;
 use strum_macros::EnumIter;
 use tauri::{api::dialog, Window};
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
@@ -232,37 +234,34 @@ impl Transcriber {
     }
 
     /// `media_data` accept media in any format
-    pub fn transcribe(&self, window: &Window, media_data: Vec<u8>) {
+    pub fn transcribe(&self, window: &Window, media_data: Vec<u8>, general_config: super::configuration::GeneralConfig, smtp_config: super::configuration::SMTPConfig, save_to: PathBuf) {
+        println!("Using model {:?}", self.model);
+
         if !self.model.is_downloaded() {
             panic!("Selected model is not downloaded");
         }
 
         println!("Transcribing audio");
 
-        util::emit_all(&window, "update-state", serde_json::json!({
-            "type": "transcribe-start",
-            "value": "",
-        }));
+        let transcription_uuid = uuid_string_random().to_string();
 
-        let mut ctx = self.ctx.lock().unwrap();
+        util::emit_all(&window, "app://transcriber_start", transcription_uuid.clone());
 
-        if let None = *ctx {
-            let whisper_context = WhisperContext::new_with_params(self.model.model_path().to_str().unwrap(), WhisperContextParameters::default()).unwrap();
-            *ctx = Some(whisper_context)
-        }
+        // let mut ctx = self.ctx.lock().unwrap();
+        //
+        // if let None = *ctx {
+        //     let whisper_context = WhisperContext::new_with_params(self.model.model_path().to_str().unwrap(), WhisperContextParameters::default()).unwrap();
+        //     *ctx = Some(whisper_context)
+        // }
 
-        drop(ctx);
-
-        let audio_samples = decode_audio(media_data.into()).unwrap();
-
+        // drop(ctx);
 
         let language = self.language.clone();
 
         let w = window.clone();
-        let whisper_context = self.ctx.clone();
+        let whisper_context = WhisperContext::new_with_params(self.model.model_path().to_str().unwrap(), WhisperContextParameters::default()).unwrap();
         std::thread::spawn(move || {
-            let whisper_context = whisper_context.lock().unwrap();
-            let mut state = whisper_context.as_ref().unwrap().create_state().unwrap();
+            let mut state = whisper_context.create_state().unwrap();
 
             let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 5 });
 
@@ -282,7 +281,7 @@ impl Transcriber {
             // });
             //
 
-            state.full(params, &audio_samples).unwrap();
+            state.full(params, &decode_audio(media_data.into()).unwrap()).unwrap();
 
             let mut fragments = Vec::new();
 
@@ -301,23 +300,45 @@ impl Transcriber {
                 fragments.push(fragment);
             }
 
-            dialog::FileDialogBuilder::new()
-                .set_title("Save Transcribed Subtitle")
-                .add_filter("Subtitle", &["srt"])
-                .save_file(move |path| {
-                    let Some(path) = path else { return };
+            let transcription = fragments.join("\n");
 
-                    std::fs::write(path, fragments.join("\n")).expect("Failed writing buffer");
-                });
+            std::fs::write(&save_to, &transcription).expect("Failed writing buffer");
 
-            util::emit_all(&w, "update-state", serde_json::json!({
-                "type": "transcribe-stop",
-                "value": "",
-            }));
+            let _ = (|| {
+                let email = lettre::Message::builder()
+                    .from(smtp_config.from.parse()?)
+                    .to(general_config.transcription_email_to.parse()?)
+                    .subject(chrono::Local::now().format("Transcription %Y-%m-%d_%H-%M-%S").to_string())
+                    .body(transcription)?;
 
-            util::emit_all(&w, "app://update-state", serde_json::json!({
-                "type": "nothing",
-                "value": "",
+                let Ok(mailer) = smtp_config.auto_smtp_transport() else {
+                    util::emit_all(&w, "app://notification", serde_json::json!({
+                        "type": "error",
+                        "value": "Unable to connect to the SMTP server using TLS, STARTTLS, or plaintext!"
+                    }));
+                    
+                    anyhow::bail!("");
+                };
+
+                match mailer.send(&email) {
+                    Ok(_) => {
+                        println!("Sending email");
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to send email: {e}");
+                        util::emit_all(&w, "app://notification", serde_json::json!({
+                            "type": "error",
+                            "value": format!("Unable email transcription because:\n{e}")
+                        }));
+                    }
+                }
+
+                anyhow::Ok(())
+            })();
+            
+            util::emit_all(&w, transcription_uuid, serde_json::json!({
+                "type": "finish",
+                "value": save_to
             }));
         });
     }

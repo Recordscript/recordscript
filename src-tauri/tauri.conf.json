@@ -22,11 +22,27 @@
         "label": "main",
         "fullscreen": false,
         "resizable": true,
-        "title": "screen-audio-recorder-test",
+        "title": "Transcriber",
         "width": 800,
-        "height": 600,
+        "height": 700,
         "minWidth": 800,
-        "minHeight": 600
+        "minHeight": 700
+      },
+      {
+        "label": "recorder-controller",
+        "fullscreen": false,
+        "resizable": false,
+        "maximizable": false,
+        "title": "Recorder Controller",
+        "width": 500,
+        "height": 100,
+        "decorations": false,
+        "transparent": true,
+        "skipTaskbar": true,
+        "alwaysOnTop": true,
+        "contentProtected": true,
+        "visible": false,
+        "url": "record-control.html"
       }
     ],
     "security": {
