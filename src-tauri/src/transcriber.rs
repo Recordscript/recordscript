@@ -3,7 +3,6 @@ use std::{path::PathBuf, sync::{Arc, Mutex}};
 use byte_slice_cast::AsSliceOf;
 use directories::ProjectDirs;
 use gst::glib::uuid_string_random;
-use lettre::Transport;
 use strum_macros::EnumIter;
 use tauri::{api::dialog, Window};
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
@@ -305,11 +304,37 @@ impl Transcriber {
             std::fs::write(&save_to, &transcription).expect("Failed writing buffer");
 
             let _ = (|| {
+                use lettre::Transport as _;
+                use lettre::message::{ header, Attachment, SinglePart, MultiPart };
+
+                let now = chrono::Local::now();
+                let readable_now = now.format("%A %B %d %Y");
+
+                let message = format!(r#"
+Hi,
+
+Here's attached the transcript for the meeting at {readable_now}.
+
+Have a good day!
+                "#).trim().to_owned();
+
+                let attachment = Attachment::new(now.format("transcription_%Y-%m-%d.srt").to_string())
+                    .body(transcription, header::ContentType::TEXT_PLAIN);
+
+
                 let email = lettre::Message::builder()
                     .from(smtp_config.from.parse()?)
-                    .to(general_config.transcription_email_to.parse()?)
-                    .subject(chrono::Local::now().format("Transcription %Y-%m-%d_%H-%M-%S").to_string())
-                    .body(transcription)?;
+                    .to(general_config.transcription_email_to.parse().unwrap())
+                    .subject(format!("Meeting Transcript at {readable_now}"))
+                    .multipart(
+                        MultiPart::alternative()
+                            .singlepart(
+                                SinglePart::builder()
+                                .header(header::ContentType::TEXT_PLAIN)
+                                .body(message)
+                            )
+                            .singlepart(attachment)
+                    )?;
 
                 let Ok(mailer) = smtp_config.auto_smtp_transport() else {
                     util::emit_all(&w, "app://notification", serde_json::json!({
