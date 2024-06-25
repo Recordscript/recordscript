@@ -334,7 +334,7 @@ fn main() {
 
                                 let sample_format = config.sample_format();
 
-                                let audio_input_name = format!("audio_{index:?}_{}", device.name().unwrap_or_default());
+                                let audio_input_name = format!("audio_{index:?}");
 
                                 pipeline_description.push(
                                     format!(
@@ -404,10 +404,10 @@ fn main() {
                             {
                                 let display = selected_device.screen;
 
-                                let video_input_name = format!("{}", display.name());
+                                let video_input_name = "video_0";
 
                                 pipeline_description.push(format!(
-                                    "appsrc name={video_input_name} ! rawvideoparse width={width} height={height} format=8 ! videoconvert ! x264enc tune=zerolatency speed-preset=veryfast ! video/x-h264,profile=baseline ! q. q. ! mux.",
+                                    "appsrc name=\"{video_input_name}\" ! rawvideoparse width={width} height={height} format=8 ! videoconvert ! x264enc tune=zerolatency speed-preset=veryfast ! video/x-h264,profile=baseline ! queue ! mux.",
                                         width = display.width(),
                                         height = display.height(),
                                 ));
@@ -442,7 +442,7 @@ fn main() {
                                     })
                                     .build();
 
-                                input_callbacks.push((video_input_name, video_input_callbacks));
+                                input_callbacks.push((video_input_name.to_owned(), video_input_callbacks));
                             }
 
                             pipeline_description.push("mp4mux name=mux ! appsink name=output".to_string());
