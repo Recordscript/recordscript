@@ -233,6 +233,11 @@ fn list_model() -> Vec<serde_json::Value> {
         ).collect()
 }
 
+#[tauri::command]
+fn show_file(path: String) {
+    showfile::show_path_in_file_manager(path);
+}
+
 fn main() {
     std::panic::set_hook(Box::new(|info| {
         let message = info.to_string();
@@ -287,6 +292,7 @@ fn main() {
             set_general_config,
             get_smtp_config,
             set_smtp_config,
+            show_file,
         ])
         .setup(move |app| {
             let window = app.get_window("main").expect("Can't get the main window");
@@ -541,10 +547,14 @@ fn main() {
                             recorder.clear();
 
                             let general_config = general_config.lock().unwrap().clone();
+                            let video_output_path = &general_config.video.save_path.join(format!("{output_name}.mp4"));
 
                             util::emit_all(&window, "app://notification", serde_json::json!({
-                                "type": "info",
-                                "value": format!("Screen recording is saved at\n{}", general_config.video.save_path.join(format!("{output_name}.mp4")).display())
+                                "type": "link",
+                                "value": serde_json::json!({
+                                    "message": format!("Screen recording is saved at\n{}", video_output_path.display()),
+                                    "at": video_output_path
+                                })
                             }));
 
                             let transcription_path = general_config.transcription.save_path.join(format!("{output_name}.srt"));

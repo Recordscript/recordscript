@@ -10,7 +10,7 @@ import {
     Switch,
     untrack,
 } from "solid-js";
-import { dialog, invoke } from "@tauri-apps/api";
+import { dialog, invoke, shell } from "@tauri-apps/api";
 import { InvokeArgs } from "@tauri-apps/api/tauri";
 import { appWindow } from "@tauri-apps/api/window";
 
@@ -21,6 +21,7 @@ import config from "./config.json";
 import { createStore } from "solid-js/store";
 import { ReactiveMap } from "@solid-primitives/map";
 import { emit } from "@tauri-apps/api/event";
+import { Command } from "@tauri-apps/api/shell";
 
 interface DeviceResult {
     name: string;
@@ -271,11 +272,17 @@ function NotificationError<P extends { title: string; message: string }>(
     );
 }
 
-function NotificationInfo<P extends { title: string; message: string }>(
+function NotificationInfo<P extends { title: string; message: string, override_on_click?: () => void }>(
     props: P,
 ) {
     return (
-        <div class="bg-zinc-700 bg-opacity-75 p-2 rounded text-white">
+        <div class="bg-zinc-700 bg-opacity-75 p-2 rounded text-white" onclick={(e) => {
+            if (props.override_on_click) {
+                e.stopPropagation();
+
+                props.override_on_click();
+            }
+        }}>
             <h3 class="font-extrabold">{props.title}</h3>
             <p
                 onClick={(event) => event.stopPropagation()}
@@ -467,6 +474,11 @@ function App() {
     appWindow.listen<EventResult>("app://notification", (event) => {
         let idx = -1;
 
+        interface LinkPayload {
+            message: string;
+            at: string;
+        }
+
         switch (event.payload.type) {
             case "error":
                 idx = push_notification(
@@ -477,6 +489,16 @@ function App() {
             case "info":
                 idx = push_notification(
                     NotificationInfo({ title: "Info", message: event.payload.value }),
+                );
+
+                break;
+            case "link":
+                const payload: LinkPayload = event.payload.value;
+
+                idx = push_notification(
+                    NotificationInfo({ title: "Info", message: payload.message, async override_on_click() {
+                        await invoke("show_file", { path: payload.at });
+                    }, })
                 );
 
                 break;
@@ -508,9 +530,13 @@ function App() {
                     case "finish":
                         delete_notification(notification_id);
 
-                        let idx = push_notification(NotificationInfo({ title: "Info", message: `${transciption_uuid}: Transcription is saved at\n${event.payload.value}` }));
-
-                        setTimeout(() => delete_notification(idx), 10000);
+                        await emit("app://notification", {
+                            type: "link",
+                            value: {
+                                message: `${transciption_uuid}: Transcription is saved at\n${event.payload.value}`,
+                                at: event.payload.value
+                            }
+                        });
 
                         await unlisten;
                         break;
