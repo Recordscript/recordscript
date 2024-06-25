@@ -6,7 +6,7 @@ fn config_path<D>() -> PathBuf {
 
     std::fs::create_dir_all(&config_path).expect("Can't create config directory");
 
-    config_path.join(format!("{}.bin", std::any::type_name::<D>()))
+    config_path.join(format!("{}.bin", std::any::type_name::<D>()).replace("::", "-"))
 }
 
 fn document_path() -> PathBuf {
