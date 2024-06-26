@@ -326,7 +326,7 @@ fn main() {
                                 date = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S"));
 
                             pipeline_description.push(
-                                format!("audiomixer name=audio_mixer ! opusenc ! multiqueue name=q ! mux.")
+                                format!("audiomixer name=audio_mixer ! avenc_aac ! multiqueue name=q ! mux.")
                             );
 
                             for (index, device) in [selected_device.microphone, selected_device.speaker].into_iter().enumerate() {
