@@ -325,6 +325,10 @@ fn main() {
                                 "{date}",
                                 date = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S"));
 
+                            pipeline_description.push(
+                                format!("audiomixer name=audio_mixer ! opusenc ! multiqueue name=q ! mux.")
+                            );
+
                             for (index, device) in [selected_device.microphone, selected_device.speaker].into_iter().enumerate() {
                                 let config = match index {
                                     0 => device.default_input_config().unwrap(),
@@ -367,8 +371,7 @@ fn main() {
                                     format!(
                                        "appsrc name={audio_input_name} !
                                             rawaudioparse pcm-format={format} sample-rate={rate} num-channels={channels} ! audioconvert ! audioresample !
-                                            opusenc !
-                                        {queue} ! mux.",
+                                        {queue} ! audio_mixer.",
                                             format =
                                                 // https://gstreamer.freedesktop.org/documentation/additional/design/mediatype-audio-raw.html#formats
                                                 // https://gstreamer.freedesktop.org/documentation/audio/audio-format.html#GstAudioFormat
@@ -384,7 +387,7 @@ fn main() {
                                                     format => unimplemented!("SampleFormat {format} is not supported yet")
                                                 },
                                             rate = config.sample_rate().0,
-                                            queue = if index == 0 { "multiqueue name=q" } else { "q. q." }
+                                            queue = if index == 0 { "multiqueue name=a" } else { "a. a." }
                                     )
                                 );
 
