@@ -328,7 +328,33 @@ fn main() {
                             for (index, device) in [selected_device.microphone, selected_device.speaker].into_iter().enumerate() {
                                 let config = match index {
                                     0 => device.default_input_config().unwrap(),
-                                    1 => device.default_output_config().unwrap(),
+                                    1 => {
+                                        let config = device.default_output_config().unwrap();
+                                        
+                                        let channels = config.channels();
+
+                                        let stream = device.build_output_stream_raw(&config.config(), config.sample_format().clone(), {
+                                            move |data, _: &_| {
+                                                let sample: Vec<u8> = match data.sample_format() {
+                                                    cpal::SampleFormat::I8 => bytemuck::cast_slice(&vec![0 as i8; channels as _]).to_owned(),
+                                                    cpal::SampleFormat::U8 => bytemuck::cast_slice(&vec![0 as u8; channels as _]).to_owned(),
+                                                    cpal::SampleFormat::I16 => bytemuck::cast_slice(&vec![0 as i16; channels as _]).to_owned(),
+                                                    cpal::SampleFormat::U16 => bytemuck::cast_slice(&vec![0 as u16; channels as _]).to_owned(),
+                                                    cpal::SampleFormat::I32 => bytemuck::cast_slice(&vec![0 as i32; channels as _]).to_owned(),
+                                                    cpal::SampleFormat::U32 => bytemuck::cast_slice(&vec![0 as u32; channels as _]).to_owned(),
+                                                    cpal::SampleFormat::F32 => bytemuck::cast_slice(&vec![0 as f32; channels as _]).to_owned(),
+                                                    cpal::SampleFormat::F64 => bytemuck::cast_slice(&vec![0 as f64; channels as _]).to_owned(),
+                                                    _ => { unreachable!() }
+                                                };
+
+                                                data.bytes_mut().write(&sample).unwrap();
+                                            }
+                                        }, |err| { }, None).unwrap();
+
+                                        audio_streams.push(stream);
+
+                                        config
+                                    },
                                     _ => unreachable!(),
                                 };
 
@@ -377,27 +403,9 @@ fn main() {
                                         let should_stop = should_stop.clone();
 
                                         move |source, _| {
-                                            let sample = match audio_tx.try_recv() {
-                                                Ok(sample) => sample,
-                                                Err(err) => match err {
-                                                    std::sync::mpsc::TryRecvError::Empty => {
-                                                        match sample_format {
-                                                            cpal::SampleFormat::I8 => Arc::from(bytemuck::cast_slice(&vec![0 as i8; channels as _])),
-                                                            cpal::SampleFormat::U8 => Arc::from(bytemuck::cast_slice(&vec![0 as u8; channels as _])),
-                                                            cpal::SampleFormat::I16 => Arc::from(bytemuck::cast_slice(&vec![0 as i16; channels as _])),
-                                                            cpal::SampleFormat::U16 => Arc::from(bytemuck::cast_slice(&vec![0 as u16; channels as _])),
-                                                            cpal::SampleFormat::I32 => Arc::from(bytemuck::cast_slice(&vec![0 as i32; channels as _])),
-                                                            cpal::SampleFormat::U32 => Arc::from(bytemuck::cast_slice(&vec![0 as u32; channels as _])),
-                                                            cpal::SampleFormat::F32 => Arc::from(bytemuck::cast_slice(&vec![0 as f32; channels as _])),
-                                                            cpal::SampleFormat::F64 => Arc::from(bytemuck::cast_slice(&vec![0 as f64; channels as _])),
-                                                            _ => { unreachable!() }
-                                                        }
-                                                    },
-                                                    std::sync::mpsc::TryRecvError::Disconnected => {
-                                                        source.end_of_stream().unwrap();
-                                                        return;
-                                                    },
-                                                },
+                                            let Ok(sample) = audio_tx.recv() else {
+                                                source.end_of_stream().unwrap();
+                                                return;
                                             };
     
                                             let pts = Instant::now() - recording_duration;
