@@ -333,6 +333,7 @@ fn main() {
                                 };
 
                                 let sample_format = config.sample_format();
+                                let channels = config.channels();
 
                                 let audio_input_name = format!("audio_{index:?}");
 
@@ -357,7 +358,6 @@ fn main() {
                                                     format => unimplemented!("SampleFormat {format} is not supported yet")
                                                 },
                                             rate = config.sample_rate().0,
-                                            channels = config.channels(),
                                             queue = if index == 0 { "multiqueue name=q" } else { "q. q." }
                                     )
                                 );
@@ -377,9 +377,27 @@ fn main() {
                                         let should_stop = should_stop.clone();
 
                                         move |source, _| {
-                                            let Ok(sample) = audio_tx.recv() else {
-                                                source.end_of_stream().unwrap();
-                                                return;
+                                            let sample = match audio_tx.try_recv() {
+                                                Ok(sample) => sample,
+                                                Err(err) => match err {
+                                                    std::sync::mpsc::TryRecvError::Empty => {
+                                                        match sample_format {
+                                                            cpal::SampleFormat::I8 => Arc::from(bytemuck::cast_slice(&vec![0 as i8; channels as _])),
+                                                            cpal::SampleFormat::U8 => Arc::from(bytemuck::cast_slice(&vec![0 as u8; channels as _])),
+                                                            cpal::SampleFormat::I16 => Arc::from(bytemuck::cast_slice(&vec![0 as i16; channels as _])),
+                                                            cpal::SampleFormat::U16 => Arc::from(bytemuck::cast_slice(&vec![0 as u16; channels as _])),
+                                                            cpal::SampleFormat::I32 => Arc::from(bytemuck::cast_slice(&vec![0 as i32; channels as _])),
+                                                            cpal::SampleFormat::U32 => Arc::from(bytemuck::cast_slice(&vec![0 as u32; channels as _])),
+                                                            cpal::SampleFormat::F32 => Arc::from(bytemuck::cast_slice(&vec![0 as f32; channels as _])),
+                                                            cpal::SampleFormat::F64 => Arc::from(bytemuck::cast_slice(&vec![0 as f64; channels as _])),
+                                                            _ => { unreachable!() }
+                                                        }
+                                                    },
+                                                    std::sync::mpsc::TryRecvError::Disconnected => {
+                                                        source.end_of_stream().unwrap();
+                                                        return;
+                                                    },
+                                                },
                                             };
     
                                             let pts = Instant::now() - recording_duration;
@@ -407,7 +425,7 @@ fn main() {
                                 let video_input_name = "video_0";
 
                                 pipeline_description.push(format!(
-                                    "appsrc name=\"{video_input_name}\" ! rawvideoparse width={width} height={height} format=8 ! videoconvert ! x264enc tune=zerolatency speed-preset=veryfast ! video/x-h264,profile=baseline ! queue ! mux.",
+                                    "appsrc name=\"{video_input_name}\" ! rawvideoparse width={width} height={height} format=8 ! videoconvert ! x264enc tune=zerolatency speed-preset=veryfast ! video/x-h264,profile=baseline ! q. q. ! mux.",
                                         width = display.width(),
                                         height = display.height(),
                                 ));

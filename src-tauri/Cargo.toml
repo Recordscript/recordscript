@@ -33,6 +33,7 @@ keyring = "2.3.3"
 chrono = "0.4.38"
 lettre = "0.11.7"
 showfile = "0.1.1"
+bytemuck = "1.16.1"
 
 [features]
 # this feature is used for production builds or when `devPath` points to the filesystem
