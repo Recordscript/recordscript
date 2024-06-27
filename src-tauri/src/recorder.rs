@@ -10,8 +10,8 @@ pub enum DeviceType {
 }
 
 pub struct SelectedDevice {
-    pub microphone: Device,
-    pub speaker: Device,
+    pub microphone: Option<Device>,
+    pub speaker: Option<Device>,
     pub screen: Display,
 }
 

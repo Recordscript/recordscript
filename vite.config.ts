@@ -5,6 +5,15 @@ import solid from "vite-plugin-solid";
 export default defineConfig(async () => ({
   plugins: [solid()],
 
+  build: {
+    rollupOptions: {
+      input: {
+        main: "./index.html",
+        record_controller: "./record-control.html"
+      }
+    }
+  },
+
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
   // 1. prevent vite from obscuring rust errors

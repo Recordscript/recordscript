@@ -36,7 +36,7 @@ fn list_microphone(selected_device: State<'_, SelectedDevice>) -> Vec<recorder::
         .map(|device| 
             recorder::DeviceResult {
                 name: device.name().unwrap(),
-                is_selected: device.eq_device(&default_device),
+                is_selected: if let Some(default_device) = default_device { device.eq_device(default_device) } else { false },
             })
         .collect()
 }
@@ -49,7 +49,7 @@ fn list_speaker(selected_device: State<'_, SelectedDevice>) -> Vec<recorder::Dev
         .map(|device| 
             recorder::DeviceResult {
                 name: device.name().unwrap_or("Unkown device".to_owned()),
-                is_selected: device.eq_device(&default_device)
+                is_selected: if let Some(default_device) = default_device { device.eq_device(default_device) } else { false },
             })
         .collect()
 }
@@ -74,7 +74,7 @@ fn select_microphone(selected_device: State<'_, SelectedDevice>, device_name: St
         .filter(|device| device.name().unwrap_or_default() == device_name)
         .next().unwrap();
     
-    selected_device.lock().unwrap().microphone = device;
+    selected_device.lock().unwrap().microphone = Some(device);
 
     println!("Switching microphone to {device_name:?}");
 }
@@ -85,7 +85,7 @@ fn select_speaker(selected_device: State<'_, SelectedDevice>, device_name: Strin
         .filter(|device| device.name().unwrap_or_default() == device_name)
         .next().unwrap();
     
-    selected_device.lock().unwrap().speaker = device;
+    selected_device.lock().unwrap().speaker = Some(device);
 
     println!("Switching speaker to {device_name:?}");
 }
@@ -251,6 +251,10 @@ fn main() {
 
     gst::init().unwrap();
 
+    let gst_registry = gst::Registry::get();
+
+    gst_registry.scan_path(std::env::current_exe().unwrap().parent().unwrap());
+
     let (record_tx, mut record_rx): (RecordChannel, _) = channel(128);
 
     let transcriber = Arc::new(Mutex::new(transcriber::Transcriber::new(transcriber::ModelType::TinyWhisper)));
@@ -258,8 +262,8 @@ fn main() {
     let host = cpal::default_host();
 
     let selected_device: SelectedDevice = Arc::new(Mutex::new(recorder::SelectedDevice {
-        microphone: host.default_input_device().unwrap(),
-        speaker: host.default_output_device().unwrap(),
+        microphone: host.default_input_device(),
+        speaker: host.default_output_device(),
         screen: scrap::Display::all().unwrap().swap_remove(0),
     }));
 
@@ -330,6 +334,8 @@ fn main() {
                             );
 
                             for (index, device) in [selected_device.microphone, selected_device.speaker].into_iter().enumerate() {
+                                let Some(device) = device else { continue };
+
                                 let config = match index {
                                     0 => device.default_input_config().unwrap(),
                                     1 => {
@@ -387,7 +393,7 @@ fn main() {
                                                     format => unimplemented!("SampleFormat {format} is not supported yet")
                                                 },
                                             rate = config.sample_rate().0,
-                                            queue = if index == 0 { "multiqueue name=a" } else { "a. a." }
+                                            queue = if input_callbacks.is_empty() { "multiqueue name=a" } else { "a. a." }
                                     )
                                 );
 
@@ -596,6 +602,19 @@ fn main() {
             });
 
             Ok(())
-        }).run(tauri::generate_context!())
+        })
+        .on_window_event(|event| match event.event() {
+            tauri::WindowEvent::Destroyed => {
+                if event.window().label() == "main" {
+                    println!("Main window is closed, closing remaining window");
+                    
+                    for window in event.window().app_handle().windows() {
+                        window.1.close().unwrap();
+                    }
+                }
+            }
+            _ => { }
+        })
+        .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
