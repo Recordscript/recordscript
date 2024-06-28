@@ -66,7 +66,7 @@
     "updater": {
       "active": true,
       "dialog": true,
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDU4MkJFOTNBQ0I4RTQ0OTMKUldTVFJJN0xPdWtyV0d2MjA1UUk4b1ZxcVNybHVuZmttS3ZXcGRhaFU2NUk2VXN4ZGp5NTNjSGgK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEVDODQxOTU0NjNDREQzNUMKUldSYzA4MWpWQm1FN05pNmpUeWVvSTRiR1NMbWpqQndyVmVBeHoyK2dDS2REUnRBVzBEdnZHQ2YK",
       "endpoints": [
         "https://fs-transcriber.s3.ap-southeast-1.amazonaws.com/release.json"
       ],
