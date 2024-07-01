@@ -395,11 +395,12 @@ fn main() {
                                     )
                                 );
 
-                                let (audio_rx, audio_tx) = std::sync::mpsc::sync_channel::<Arc<[u8]>>(0);
+                                let (audio_rx, audio_tx) = std::sync::mpsc::sync_channel::<Vec<u8>>(0);
 
                                 let stream = device.build_input_stream_raw(&config.into(), sample_format, {
                                     move |data: &cpal::Data, _: &_| {
-                                        let _ = audio_rx.send(Arc::from(data.bytes()));
+                                        // let _ = std::io::stdout().lock();
+                                        let _ = audio_rx.send(data.bytes().to_vec());
                                     }
                                 }, |error| panic!("{error}"), None).unwrap();
 
@@ -440,7 +441,7 @@ fn main() {
                                 let video_input_name = "video_0";
 
                                 pipeline_description.push(format!(
-                                    "appsrc name=\"{video_input_name}\" ! rawvideoparse width={width} height={height} format=8 ! videoconvert ! x264enc ! video/x-h264,profile=baseline ! q. q. ! mux.",
+                                    "appsrc name=\"{video_input_name}\" ! rawvideoparse width={width} height={height} format=8 ! videoconvert ! x264enc speed-preset=veryfast ! video/x-h264,profile=baseline ! q. q. ! mux.",
                                         width = display.width(),
                                         height = display.height(),
                                 ));
@@ -467,7 +468,7 @@ fn main() {
                                             let pts = Instant::now() - recording_duration;
 
                                             let data = pixel_buffer.data();
-                                            let mut buffer = gst::Buffer::from_slice(Arc::from(data));
+                                            let mut buffer = gst::Buffer::from_slice(data.to_vec());
                                             buffer.get_mut().unwrap().set_pts(Some(gst::ClockTime::from_seconds_f64(pts.as_secs_f64())));
 
                                             let _ = source.push_buffer(buffer);
