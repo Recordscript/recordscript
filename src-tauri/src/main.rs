@@ -329,9 +329,7 @@ fn main() {
                                 "{date}",
                                 date = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S"));
 
-                            pipeline_description.push(
-                                format!("audiomixer name=audio_mixer ! avenc_aac ! multiqueue name=q ! mux.")
-                            );
+                            pipeline_description.push("audiomixer name=audio_mixer ! avenc_aac ! multiqueue name=q ! mux.".to_owned());
 
                             for (index, device) in [selected_device.microphone, selected_device.speaker].into_iter().enumerate() {
                                 let Some(device) = device else { continue };
@@ -343,17 +341,17 @@ fn main() {
                                         
                                         let channels = config.channels();
 
-                                        let stream = device.build_output_stream_raw(&config.config(), config.sample_format().clone(), {
+                                        let stream = device.build_output_stream_raw(&config.config(), config.sample_format(), {
                                             move |data, _: &_| {
                                                 let sample: Vec<u8> = match data.sample_format() {
-                                                    cpal::SampleFormat::I8 => bytemuck::cast_slice(&vec![0 as i8; channels as _]).to_owned(),
-                                                    cpal::SampleFormat::U8 => bytemuck::cast_slice(&vec![0 as u8; channels as _]).to_owned(),
-                                                    cpal::SampleFormat::I16 => bytemuck::cast_slice(&vec![0 as i16; channels as _]).to_owned(),
-                                                    cpal::SampleFormat::U16 => bytemuck::cast_slice(&vec![0 as u16; channels as _]).to_owned(),
-                                                    cpal::SampleFormat::I32 => bytemuck::cast_slice(&vec![0 as i32; channels as _]).to_owned(),
-                                                    cpal::SampleFormat::U32 => bytemuck::cast_slice(&vec![0 as u32; channels as _]).to_owned(),
-                                                    cpal::SampleFormat::F32 => bytemuck::cast_slice(&vec![0 as f32; channels as _]).to_owned(),
-                                                    cpal::SampleFormat::F64 => bytemuck::cast_slice(&vec![0 as f64; channels as _]).to_owned(),
+                                                    cpal::SampleFormat::I8 => bytemuck::cast_slice(&vec![0_i8; channels as _]).to_owned(),
+                                                    cpal::SampleFormat::U8 => bytemuck::cast_slice(&vec![0_u8; channels as _]).to_owned(),
+                                                    cpal::SampleFormat::I16 => bytemuck::cast_slice(&vec![0_i16; channels as _]).to_owned(),
+                                                    cpal::SampleFormat::U16 => bytemuck::cast_slice(&vec![0_u16; channels as _]).to_owned(),
+                                                    cpal::SampleFormat::I32 => bytemuck::cast_slice(&vec![0_i32; channels as _]).to_owned(),
+                                                    cpal::SampleFormat::U32 => bytemuck::cast_slice(&vec![0_u32; channels as _]).to_owned(),
+                                                    cpal::SampleFormat::F32 => bytemuck::cast_slice(&vec![0_f32; channels as _]).to_owned(),
+                                                    cpal::SampleFormat::F64 => bytemuck::cast_slice(&vec![0_f64; channels as _]).to_owned(),
                                                     _ => { unreachable!() }
                                                 };
 
@@ -442,7 +440,7 @@ fn main() {
                                 let video_input_name = "video_0";
 
                                 pipeline_description.push(format!(
-                                    "appsrc name=\"{video_input_name}\" ! rawvideoparse width={width} height={height} format=8 ! videoconvert ! x264enc tune=zerolatency speed-preset=veryfast ! video/x-h264,profile=baseline ! q. q. ! mux.",
+                                    "appsrc name=\"{video_input_name}\" ! rawvideoparse width={width} height={height} format=8 ! videoconvert ! x264enc ! video/x-h264,profile=baseline ! q. q. ! mux.",
                                         width = display.width(),
                                         height = display.height(),
                                 ));
@@ -496,7 +494,7 @@ fn main() {
                                 source.set_callbacks(callback);
                             }
 
-                            let output_path = general_config.lock().unwrap().video.save_path.join(format!("{output_name}.mp4"));
+                            let output_path = general_config.lock().unwrap().save_to.save_path.join(format!("{output_name}.mp4"));
 
                             let mut output = File::create(output_path).unwrap();
 
@@ -534,7 +532,7 @@ fn main() {
                                     }
 
                                     gstreamer_loop(pipeline, |_| { false }).unwrap();
-                                
+                               
                                     println!("Closing pipeline");
                                 }
                             });
@@ -582,7 +580,7 @@ fn main() {
                             recorder.clear();
 
                             let general_config = general_config.lock().unwrap().clone();
-                            let video_output_path = &general_config.video.save_path.join(format!("{output_name}.mp4"));
+                            let video_output_path = &general_config.save_to.save_path.join(format!("{output_name}.mp4"));
 
                             util::emit_all(&window, "app://notification", serde_json::json!({
                                 "type": "link",
@@ -592,10 +590,12 @@ fn main() {
                                 })
                             }));
 
-                            let transcription_path = general_config.transcription.save_path.join(format!("{output_name}.srt"));
+                            if general_config.transcript {
+                                let transcription_path = general_config.save_to.save_path.join(format!("{output_name}.srt"));
 
-                            transcriber.lock().unwrap()
-                                .transcribe(&window, data, general_config, smtp_config.lock().unwrap().clone(), transcription_path);
+                                transcriber.lock().unwrap()
+                                    .transcribe(&window, data, general_config, smtp_config.lock().unwrap().clone(), transcription_path);
+                            }
                         },
                     }
                 }

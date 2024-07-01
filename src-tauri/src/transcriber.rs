@@ -1,5 +1,6 @@
 use std::{path::PathBuf, sync::{Arc, Mutex}};
 
+use anyhow::Context;
 use byte_slice_cast::AsSliceOf;
 use directories::ProjectDirs;
 use gst::glib::uuid_string_random;
@@ -321,11 +322,34 @@ Have a good day!
                 let attachment = Attachment::new(now.format("transcription_%Y-%m-%d.srt").to_string())
                     .body(transcription, header::ContentType::TEXT_PLAIN);
 
+                let mut emails = general_config.transcription_email_to.split(',');
 
-                let email = lettre::Message::builder()
-                    .from(smtp_config.from.parse()?)
-                    .to(general_config.transcription_email_to.parse().unwrap())
-                    .subject(format!("Meeting Transcript at {readable_now}"))
+                let email = {
+                    let mut email = lettre::Message::builder()
+                        .from(smtp_config.from.parse()?)
+                        .to(emails.next().context("No emails were provided")?.trim().parse().context("Provided emails were invalid")?);
+
+                    for mail in emails {
+                        let mail = mail.trim();
+                        email = email.bcc(mail.parse().context(format!("Email '{mail}' is invalid"))?);
+                    }
+
+                    anyhow::Ok(email)
+                };
+
+                let email = match email {
+                    Ok(email) => email,
+                    Err(err) => {
+                        util::emit_all(&w, "app://notification", serde_json::json!({
+                            "type": "error",
+                            "value": err.to_string()
+                        }));
+
+                        anyhow::bail!("");
+                    },
+                };
+
+                let email = email.subject(format!("Meeting Transcript at {readable_now}"))
                     .multipart(
                         MultiPart::alternative()
                             .singlepart(
@@ -360,6 +384,11 @@ Have a good day!
 
                 anyhow::Ok(())
             })();
+
+            util::emit_all(&w, "app://notification", serde_json::json!({
+                "type": "info",
+                "value": "Transcription email is sent!"
+            }));
             
             util::emit_all(&w, transcription_uuid, serde_json::json!({
                 "type": "finish",

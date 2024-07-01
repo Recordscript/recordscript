@@ -57,9 +57,9 @@ interface SavePathConfig {
 }
 
 interface GeneralConfig {
-    transcription: SavePathConfig;
+    transcript: boolean;
+    save_to: SavePathConfig;
     transcription_email_to: string;
-    video: SavePathConfig;
 }
 
 interface SMTPConfig {
@@ -262,10 +262,7 @@ function NotificationError<P extends { title: string; message: string }>(
     return (
         <div class="bg-red-700 bg-opacity-75 p-2 rounded text-white">
             <h3 class="font-extrabold">{props.title}</h3>
-            <p
-                onClick={(event) => event.stopPropagation()}
-                class="text-sm cursor-text whitespace-pre-line"
-            >
+            <p class="text-sm whitespace-pre-line">
                 {props.message}
             </p>
         </div>
@@ -284,10 +281,7 @@ function NotificationInfo<P extends { title: string; message: string, override_o
             }
         }}>
             <h3 class="font-extrabold">{props.title}</h3>
-            <p
-                onClick={(event) => event.stopPropagation()}
-                class="text-sm cursor-text whitespace-pre-line"
-            >
+            <p class="text-sm whitespace-pre-line">
                 {props.message}
             </p>
         </div>
@@ -326,9 +320,7 @@ function App() {
 
     const [transcription_email_to, set_transcription_email_to] = createSignal("");
 
-    const [models, { refetch: update_models }] = createInvokeResource<Model[]>(
-        "list_model",
-    );
+    const [models, { refetch: update_models }] = createInvokeResource<Model[]>("list_model");
 
     createEffect(() => invoke("select_microphone", { deviceName: microphone() }));
     createEffect(() => invoke("select_speaker", { deviceName: speaker() }));
@@ -350,62 +342,41 @@ function App() {
         set_general_config(config);
     });
 
-    async function update_transcription_save_path_with(path: string) {
+    async function update_save_to_path_with(path: string) {
         let config = general_config()!;
 
-        config.transcription.save_path_histories.push(path);
+        config.save_to.save_path_histories.push(path);
 
-        config.transcription.save_path_histories = [
+        config.save_to.save_path_histories = [
             ...new Set([
-                ...config.transcription.save_path_histories,
+                ...config.save_to.save_path_histories,
             ]),
         ];
-        config.transcription.save_path = path;
+        config.save_to.save_path = path;
 
         set_general_config(config);
     }
 
-    async function update_transcription_save_path() {
+    async function update_is_transcript(value: boolean) {
+        let config = general_config()!;
+
+        config.transcript = value;
+
+        set_general_config(config);
+    }
+
+    async function update_save_to_path() {
         let result = await dialog.open({
             multiple: false,
             directory: true,
-            title: "Choose new transcription save location",
+            title: "Choose new save location",
         });
 
         let path = result as string ?? null;
 
         if (path === null) return;
 
-        update_transcription_save_path_with(path);
-    }
-
-    async function update_video_save_path_with(path: string) {
-        let config = general_config()!;
-
-        config.video.save_path_histories.push(path);
-
-        config.video.save_path_histories = [
-            ...new Set([
-                ...config.video.save_path_histories,
-            ]),
-        ];
-        config.video.save_path = path;
-
-        set_general_config(config);
-    }
-
-    async function update_video_save_path() {
-        let result = await dialog.open({
-            multiple: false,
-            directory: true,
-            title: "Choose new transcription save location",
-        });
-
-        let path = result as string ?? null;
-
-        if (path === null) return;
-
-        update_video_save_path_with(path);
+        update_save_to_path_with(path);
     }
 
     function push_notification(element: JSX.Element): number {
@@ -424,7 +395,7 @@ function App() {
 
     function on_email_configuration_click() {
         set_popup(EmailConfigurator({
-            on_save: function() {
+            on_save: function () {
                 update_smtp_config();
                 set_popup(null);
             },
@@ -432,22 +403,22 @@ function App() {
     }
 
     const recording = {
-        start: async function() {
+        start: async function () {
             await invoke("start_record");
 
             set_recording_state(RecorderState.Running);
         },
-        stop: async function() {
+        stop: async function () {
             await invoke("stop_record");
 
             set_recording_state(RecorderState.Stopped);
         },
-        pause: async function() {
+        pause: async function () {
             await invoke("pause_record");
 
             set_recording_state(RecorderState.Paused);
         },
-        resume: async function() {
+        resume: async function () {
             await invoke("resume_record");
 
             set_recording_state(RecorderState.Running);
@@ -496,9 +467,11 @@ function App() {
                 const payload: LinkPayload = event.payload.value;
 
                 idx = push_notification(
-                    NotificationInfo({ title: "Info", message: payload.message, async override_on_click() {
-                        await invoke("show_file", { path: payload.at });
-                    }, })
+                    NotificationInfo({
+                        title: "Info", message: payload.message, async override_on_click() {
+                            await invoke("show_file", { path: payload.at });
+                        },
+                    })
                 );
 
                 break;
@@ -523,9 +496,14 @@ function App() {
         }
 
         const notification_id = push_notification(Element());
+
+        let shown = false;
         const unlisten = appWindow.listen<EventResult>(
             event.payload,
             async (event) => {
+                if (shown) return;
+                shown = true;
+
                 switch (event.payload.type) {
                     case "finish":
                         delete_notification(notification_id);
@@ -659,91 +637,96 @@ function App() {
                             </Suspense>
                         </select>
                     </section>
+                    <section class="flex items-center gap-2">
+                        <h3 class="text-sm font-bold my-0 h-fit w-32">Transcript</h3>
+                        <input type="checkbox" onchange={(e) => update_is_transcript(e.target.checked)} checked={general_config()?.transcript} />
+                    </section>
                 </div>
             </div>
-            <div class="m-2">
-                <h2 class="text-xl font-bold h-fit">Transcriber Configuration</h2>
-                <hr class="my-2" />
-                <div class="flex flex-col gap-1">
-                    <section class="flex items-center gap-2">
-                        <h3 class="text-sm font-bold my-0 h-fit w-32">Model</h3>
-                        <div class="flex flex-col w-full">
+            <Show when={general_config()?.transcript}>
+                <div class="m-2">
+                    <h2 class="text-xl font-bold h-fit">Transcriber Configuration</h2>
+                    <hr class="my-2" />
+                    <div class="flex flex-col gap-1">
+                        <section class="flex items-center gap-2">
+                            <h3 class="text-sm font-bold my-0 h-fit w-32">Model</h3>
+                            <div class="flex flex-col w-full">
+                                <select
+                                    class="border p-1 text-xs w-full"
+                                    onchange={(e) => set_model(parseInt(e.target.value))}
+                                >
+                                    <Suspense>
+                                        <For each={models()!}>
+                                            {(m, i) => (
+                                                <option value={i()} selected={i() === model()}>
+                                                    {m.name}
+                                                </option>
+                                            )}
+                                        </For>
+                                    </Suspense>
+                                </select>
+                                <Suspense>
+                                    <Show
+                                        when={model() !== null && !models()?.[model()!].is_downloaded}
+                                    >
+                                        <Switch>
+                                            <Match when={model_state() === ModelState.Downloading}>
+                                                <button
+                                                    class="border rounded py-2 text-xs"
+                                                    disabled
+                                                >
+                                                    Downloading %{model_download_progress()}
+                                                </button>
+                                            </Match>
+                                            <Match when={model_state() === ModelState.Stopped}>
+                                                <button
+                                                    class="border rounded py-2 cursor-pointer text-xs"
+                                                    onclick={download_selected_model}
+                                                >
+                                                    Download
+                                                </button>
+                                            </Match>
+                                        </Switch>
+                                    </Show>
+                                </Suspense>
+                            </div>
+                        </section>
+                        <section class="flex items-center gap-2">
+                            <h3 class="text-sm font-bold my-0 h-fit w-32">Language</h3>
                             <select
                                 class="border p-1 text-xs w-full"
-                                onchange={(e) => set_model(parseInt(e.target.value))}
+                                onchange={(e) => set_language(e.target.value)}
                             >
-                                <Suspense>
-                                    <For each={models()!}>
-                                        {(m, i) => (
-                                            <option value={i()} selected={i() === model()}>
-                                                {m.name}
-                                            </option>
-                                        )}
-                                    </For>
-                                </Suspense>
+                                <option value="auto">Auto</option>
+                                <For each={languages}>
+                                    {([display, id]) => <option value={id}>{display}</option>}
+                                </For>
                             </select>
-                            <Suspense>
-                                <Show
-                                    when={model() !== null && !models()?.[model()!].is_downloaded}
-                                >
-                                    <Switch>
-                                        <Match when={model_state() === ModelState.Downloading}>
-                                            <button
-                                                class="border rounded py-2 text-xs"
-                                                disabled
-                                            >
-                                                Downloading %{model_download_progress()}
-                                            </button>
-                                        </Match>
-                                        <Match when={model_state() === ModelState.Stopped}>
-                                            <button
-                                                class="border rounded py-2 cursor-pointer text-xs"
-                                                onclick={download_selected_model}
-                                            >
-                                                Download
-                                            </button>
-                                        </Match>
-                                    </Switch>
-                                </Show>
-                            </Suspense>
-                        </div>
-                    </section>
-                    <section class="flex items-center gap-2">
-                        <h3 class="text-sm font-bold my-0 h-fit w-32">Language</h3>
-                        <select
-                            class="border p-1 text-xs w-full"
-                            onchange={(e) => set_language(e.target.value)}
-                        >
-                            <option value="auto">Auto</option>
-                            <For each={languages}>
-                                {([display, id]) => <option value={id}>{display}</option>}
-                            </For>
-                        </select>
-                    </section>
+                        </section>
+                    </div>
                 </div>
-            </div>
+            </Show>
             <div class="m-2">
                 <h2 class="text-xl font-bold h-fit">General Configuration</h2>
                 <hr class="my-2" />
                 <div class="flex flex-col gap-1">
                     <section class="flex items-center gap-2">
                         <h3 class="text-sm font-bold my-0 h-fit w-52">
-                            Save Transcription To
+                            Save To
                         </h3>
                         <div class="flex flex-col w-full">
                             <select
                                 class="border p-1 text-xs w-full"
-                                onchange={(e) =>
-                                    update_transcription_save_path_with(e.target.value)}
+                                onchange={(e) => update_save_to_path_with(e.target.value)}
                             >
                                 <Show when={general_config() !== undefined}>
                                     <For
-                                        each={general_config()!.transcription.save_path_histories}
+                                        each={general_config()!.save_to.save_path_histories}
                                     >
                                         {(path) => (
                                             <option
                                                 value={path}
-                                                selected={general_config()!.transcription.save_path ===
+                                                selected={general_config()!.save_to.save_path ===
                                                     path}
                                             >
                                                 {path}
@@ -753,78 +736,47 @@ function App() {
                                 </Show>
                             </select>
                             <button
-                                onclick={update_transcription_save_path}
+                                onclick={update_save_to_path}
                                 class="border rounded py-2 cursor-pointer text-xs"
                             >
                                 Browse
                             </button>
                         </div>
                     </section>
-                    <section class="flex items-center gap-2">
-                        <h3 class="text-sm font-bold my-0 h-fit w-52">
-                            Save Video To
-                        </h3>
-                        <div class="flex flex-col w-full">
-                            <select
-                                class="border p-1 text-xs w-full"
-                                onchange={(e) => update_video_save_path_with(e.target.value)}
-                            >
-                                <Show when={general_config() !== undefined}>
-                                    <For
-                                        each={general_config()!.video.save_path_histories}
-                                    >
-                                        {(path) => (
-                                            <option
-                                                value={path}
-                                                selected={general_config()!.video.save_path ===
-                                                    path}
-                                            >
-                                                {path}
-                                            </option>
-                                        )}
-                                    </For>
-                                </Show>
-                            </select>
-                            <button
-                                onclick={update_video_save_path}
-                                class="border rounded py-2 cursor-pointer text-xs"
-                            >
-                                Browse
-                            </button>
-                        </div>
-                    </section>
-                    <section class="flex items-center gap-2">
-                        <h3 class="text-sm font-bold my-0 h-fit w-52">
-                            Email Transcription To
-                        </h3>
-                        <div class="flex flex-col w-full">
-                            <span class="absolute text-xs ml-1 mb-[-7px] px-2 z-30 bg-white w-fit text-red-800">
-                            </span>
-                            <input
-                                type="text"
-                                class="border rounded p-2 text-xs disabled:bg-gray-50 mt-2"
-                                onchange={(event) => {
-                                    set_transcription_email_to(event.currentTarget.value);
-                                }}
-                                placeholder="email@example.com"
-                                value={smtp_config()?.host
-                                    ? general_config()?.transcription_email_to
-                                    : "SMTP server is not configured"}
-                                disabled={!smtp_config()?.host}
-                            />
-                            <button
-                                onClick={on_email_configuration_click}
-                                class="border rounded py-2 cursor-pointer text-xs"
-                            >
-                                Configure
-                            </button>
-                        </div>
-                    </section>
+                    <Show when={general_config()?.transcript}>
+                        <section class="flex items-center gap-2">
+                            <h3 class="text-sm font-bold my-0 h-fit w-52">
+                                Email Transcription To
+                            </h3>
+                            <div class="flex flex-col w-full">
+                                <span class="absolute text-xs ml-1 mb-[-7px] px-2 z-30 bg-white w-fit text-red-800">
+                                </span>
+                                <input
+                                    type="text"
+                                    class="border rounded p-2 text-xs disabled:bg-gray-50 mt-2"
+                                    onchange={(event) => {
+                                        set_transcription_email_to(event.currentTarget.value);
+                                    }}
+                                    placeholder="email@example.com,email2@example.com,other@neighbour.com"
+                                    value={smtp_config()?.host
+                                        ? general_config()?.transcription_email_to
+                                        : "SMTP server is not configured"}
+                                    disabled={!smtp_config()?.host}
+                                />
+                                <button
+                                    onClick={on_email_configuration_click}
+                                    class="border rounded py-2 cursor-pointer text-xs"
+                                >
+                                    Configure
+                                </button>
+                            </div>
+                        </section>
+                    </Show>
                 </div>
             </div>
             <div class="w-full h-full flex items-end">
                 <Switch>
-                    <Match when={model() !== null && !models()?.[model()!].is_downloaded}>
+                    <Match when={general_config()?.transcript && model() !== null && !models()?.[model()!].is_downloaded}>
                         <button
                             class="w-full h-full max-h-[3rem] border border-x-transparent font-bold p-2 cursor-default"
                             disabled
@@ -858,6 +810,7 @@ function App() {
                     </Match>
                 </Switch>
             </div>
+            <a class="mx-auto text-xs text-center my-1 text-blue-500 underline w-fit" target="_blank" href="https://forms.gle/PTs2WGgpidwNeXkLA">Feedback or need support?</a>
         </main>
     );
 }

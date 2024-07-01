@@ -57,9 +57,9 @@ impl Default for SavePathConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GeneralConfig {
-    pub transcription: SavePathConfig,
+    pub transcript: bool,
     pub transcription_email_to: String,
-    pub video: SavePathConfig,
+    pub save_to: SavePathConfig,
 }
 
 impl Default for GeneralConfig {
@@ -69,9 +69,9 @@ impl Default for GeneralConfig {
         }
 
         let this = Self {
-            transcription: SavePathConfig::default(),
+            transcript: false,
             transcription_email_to: String::new(),
-            video: SavePathConfig::default(),
+            save_to: SavePathConfig::default(),
         };
 
         save(&this);
@@ -113,8 +113,11 @@ impl SMTPConfig {
     pub fn auto_smtp_transport(&self) -> anyhow::Result<lettre::SmtpTransport> {
         use lettre::SmtpTransport;
 
-        let creds = lettre::transport::smtp::authentication::Credentials::new(self.username.clone(), self.password.clone());
-        
+        let creds = lettre::transport::smtp::authentication::Credentials::new(
+            self.username.clone(),
+            self.password.clone(),
+        );
+
         let tls = || {
             println!("Trying to establish a TLS connection");
 
@@ -127,7 +130,7 @@ impl SMTPConfig {
             match transport.test_connection() {
                 Ok(false) => anyhow::bail!("Couldn't connect to SMTP server with TLS"),
                 Err(e) => anyhow::bail!("Couldn't connect to SMTP server with TLS because:\n{e}"),
-                _ => { }
+                _ => {}
             }
 
             Ok(transport)
@@ -143,9 +146,13 @@ impl SMTPConfig {
                 .build();
 
             match transport.test_connection() {
-                Ok(false) => anyhow::bail!("Couldn't connect to SMTP server with TLS over plaintext"),
-                Err(e) => anyhow::bail!("Couldn't connect to SMTP server with TLS over plaintext because:\n{e}"),
-                _ => { }
+                Ok(false) => {
+                    anyhow::bail!("Couldn't connect to SMTP server with TLS over plaintext")
+                }
+                Err(e) => anyhow::bail!(
+                    "Couldn't connect to SMTP server with TLS over plaintext because:\n{e}"
+                ),
+                _ => {}
             }
 
             Ok(transport)
@@ -162,18 +169,17 @@ impl SMTPConfig {
 
             match transport.test_connection() {
                 Ok(false) => anyhow::bail!("Couldn't connect to SMTP server with plaintext"),
-                Err(e) => anyhow::bail!("Couldn't connect to SMTP server with plaintext because:\n{e}"),
-                _ => { }
+                Err(e) => {
+                    anyhow::bail!("Couldn't connect to SMTP server with plaintext because:\n{e}")
+                }
+                _ => {}
             }
 
             Ok(transport)
         };
 
-        Ok(
-            tls()
-                .map_or_else(|_| tls_over_plaintext(), |t| Ok(t))
-                .map_or_else(|_| plaintext(), |t| Ok(t))?
-        )
+        tls()
+            .map_or_else(|_| tls_over_plaintext(), Ok)
+            .map_or_else(|_| plaintext(), Ok)
     }
 }
-
