@@ -559,6 +559,8 @@ fn main() {
                             window.emit("app://recording_state", "start").unwrap();
                         },
                         recorder::RecordCommand::Stop => {
+                            recorder_control_window.hide().unwrap();
+
                             for (should_stop, pipeline) in &mut recorder {
                                 should_stop.store(true, atomic::Ordering::Relaxed);
 
@@ -566,8 +568,6 @@ fn main() {
                                     std::thread::yield_now();
                                 }
                             }
-
-                            recorder_control_window.hide().unwrap();
 
                             window.emit("app://recording_state", "stop").unwrap();
 
