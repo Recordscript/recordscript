@@ -1,6 +1,7 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+// #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use core::panic;
 use std::{collections::HashMap, fs::File, io::Write, ops::{Deref, DerefMut}, process, sync::{atomic::{self, AtomicBool, AtomicPtr}, Arc, Mutex}, thread, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
 
 use anyhow::{Context, Result};
@@ -329,7 +330,7 @@ fn main() {
                                 "{date}",
                                 date = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S"));
 
-                            pipeline_description.push("audiomixer name=audio_mixer ! avenc_aac ! multiqueue name=q ! mux.".to_owned());
+                            pipeline_description.push("audiomixer name=audio_mixer ! avenc_aac ! multiqueue name=q max-size-buffers=0 max-size-bytes=0 max-size-time=0 ! mux.".to_owned());
 
                             for (index, device) in [selected_device.microphone, selected_device.speaker].into_iter().enumerate() {
                                 let Some(device) = device else { continue };
@@ -355,7 +356,7 @@ fn main() {
                                                     _ => { unreachable!() }
                                                 };
 
-                                                data.bytes_mut().write(&sample).unwrap();
+                                                data.bytes_mut().write_all(&sample).unwrap();
                                             }
                                         }, |err| { }, None).unwrap();
 
@@ -441,7 +442,7 @@ fn main() {
                                 let video_input_name = "video_0";
 
                                 pipeline_description.push(format!(
-                                    "appsrc name=\"{video_input_name}\" ! rawvideoparse width={width} height={height} format=8 ! videoconvert ! x264enc speed-preset=veryfast ! video/x-h264,profile=baseline ! q. q. ! mux.",
+                                    "appsrc name=\"{video_input_name}\" ! rawvideoparse width={width} height={height} format=8 ! videoconvert ! x264enc speed-preset=veryfast tune=zerolatency ! video/x-h264,profile=baseline ! q. q. ! mux.",
                                         width = display.width(),
                                         height = display.height(),
                                 ));
@@ -459,8 +460,17 @@ fn main() {
                                                     source.end_of_stream().unwrap();
                                                     return;
                                                 }
-        
-                                                let Ok(scrap::Frame::PixelBuffer(pixel_buffer)) = unsafe { &mut *capturer.load(atomic::Ordering::Acquire) }.frame(Duration::ZERO) else { continue };
+
+                                                let frame = match unsafe { &mut *capturer.load(atomic::Ordering::Acquire) }.frame(Duration::ZERO) {
+                                                    Ok(frame) => frame,
+                                                    Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => continue,
+                                                    Err(err) => panic!("{err}"),
+                                                };
+
+                                                let scrap::Frame::PixelBuffer(pixel_buffer) = frame else {
+                                                    println!("Received frame is not PixelBuffer, skipping");
+                                                    continue
+                                                };
 
                                                 break pixel_buffer;
                                             };
@@ -511,7 +521,7 @@ fn main() {
                                             let buffer = mapped_buffer.as_slice();
 
                                             output.write_all(buffer).unwrap();
-                                            media_data.lock().unwrap().write(buffer).unwrap();
+                                            media_data.lock().unwrap().write_all(buffer).unwrap();
 
                                             Ok(gst::FlowSuccess::Ok)
                                         }
