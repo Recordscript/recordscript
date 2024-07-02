@@ -394,13 +394,13 @@ Have a good day!
                     }
                 }
 
+                util::emit_all(&w, "app://notification", serde_json::json!({
+                    "type": "info",
+                    "value": "Transcription email is sent!"
+                }));
+
                 anyhow::Ok(())
             })();
-
-            util::emit_all(&w, "app://notification", serde_json::json!({
-                "type": "info",
-                "value": "Transcription email is sent!"
-            }));
             
             util::emit_all(&w, transcription_uuid, serde_json::json!({
                 "type": "finish",
