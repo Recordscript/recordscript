@@ -331,7 +331,7 @@ Have a good day!
 
                     for mail in emails {
                         let mail = mail.trim();
-                        email = email.bcc(mail.parse().context(format!("Email '{mail}' is invalid"))?);
+                        email = email.cc(mail.parse().context(format!("Email '{mail}' is invalid"))?);
                     }
 
                     anyhow::Ok(email)
