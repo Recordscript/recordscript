@@ -14,7 +14,7 @@ fn document_path() -> PathBuf {
         .unwrap()
         .document_dir()
         .unwrap()
-        .join("Transcriber");
+        .join("Recordscript");
 
     std::fs::create_dir_all(&path).expect("Can't create transcription directory");
 
