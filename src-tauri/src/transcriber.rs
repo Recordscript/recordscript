@@ -128,6 +128,18 @@ impl ModelType {
         }
     }
 
+    /// Check if runtime machine has enough memory to run the model
+    pub fn can_run(&self) -> bool {
+        use sysinfo::{ System, RefreshKind, MemoryRefreshKind };
+
+        let system_info = System::new_with_specifics(RefreshKind::new().with_memory(MemoryRefreshKind::everything()));
+        let available_memory = (system_info.total_memory() + system_info.total_swap()) as usize;
+
+        let model_memory_usage = self.get_avg_mem_usage() * 1000000;
+
+        model_memory_usage < available_memory 
+    }
+
     /// Disk usage of models in MB
     ///
     /// Using the non quantized model size, even if we use the quantized model, just in case

@@ -10,7 +10,7 @@ import {
     Switch,
     untrack,
 } from "solid-js";
-import { dialog, invoke, shell } from "@tauri-apps/api";
+import { dialog, invoke } from "@tauri-apps/api";
 import { InvokeArgs } from "@tauri-apps/api/tauri";
 import { appWindow } from "@tauri-apps/api/window";
 
@@ -18,10 +18,8 @@ import * as util from "./util";
 
 import languages from "./lang.json";
 import config from "./config.json";
-import { createStore } from "solid-js/store";
 import { ReactiveMap } from "@solid-primitives/map";
 import { emit } from "@tauri-apps/api/event";
-import { Command } from "@tauri-apps/api/shell";
 
 interface DeviceResult {
     name: string;
@@ -33,6 +31,7 @@ interface Model {
     disk_usage: number;
     mem_usage: number;
     is_downloaded: boolean;
+    can_run: boolean;
 }
 
 enum ModelState {
@@ -776,6 +775,14 @@ function App() {
             </div>
             <div class="w-full h-full flex items-end">
                 <Switch>
+                    <Match when={model() !== null && !models()?.[model()!].can_run}>
+                        <button
+                            class="w-full h-full max-h-[3rem] border border-x-transparent font-bold p-2 cursor-default"
+                            disabled
+                        >
+                            You need more ram to run this model ({!models()?.[model()!].mem_usage} MB)
+                        </button>
+                    </Match>
                     <Match when={general_config()?.transcript && model() !== null && !models()?.[model()!].is_downloaded}>
                         <button
                             class="w-full h-full max-h-[3rem] border border-x-transparent font-bold p-2 cursor-default"

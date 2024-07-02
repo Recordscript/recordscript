@@ -230,6 +230,7 @@ fn list_model() -> Vec<serde_json::Value> {
                 "mem_usage": model.get_avg_mem_usage(),
                 "disk_usage": model.get_disk_usage(),
                 "is_downloaded": model.is_downloaded(),
+                "can_run": model.can_run(),
             })
         ).collect()
 }
