@@ -517,6 +517,11 @@ function App() {
 
                         await unlisten;
                         break;
+                    case "finish_failed":
+                        delete_notification(notification_id);
+
+                        await unlisten;
+                        break;
                 }
             },
         );

@@ -292,29 +292,50 @@ impl Transcriber {
             //     }
             // });
             //
+            
+            let transcription = (|| {
+                state.full(params, &decode_audio(media_data.into())?)?;
 
-            state.full(params, &decode_audio(media_data.into()).unwrap()).unwrap();
+                let mut fragments = Vec::new();
 
-            let mut fragments = Vec::new();
+                for s in 0..state.full_n_segments()? {
+                    let text = state.full_get_segment_text(s)?;
+                    let start = state.full_get_segment_t0(s)?;
+                    let stop = state.full_get_segment_t1(s)?;
 
-            for s in 0..state.full_n_segments().unwrap() {
-                let text = state.full_get_segment_text(s).unwrap();
-                let start = state.full_get_segment_t0(s).unwrap();
-                let stop = state.full_get_segment_t1(s).unwrap();
+                    let fragment = format!(
+                        "\n{s}\n{} --> {}\n{}\n",
+                        util::format_timestamp(start, true, ","),
+                        util::format_timestamp(stop, true, ","),
+                        text.trim().replace("-->", "->")
+                    );
 
-                let fragment = format!(
-                    "\n{s}\n{} --> {}\n{}\n",
-                    util::format_timestamp(start, true, ","),
-                    util::format_timestamp(stop, true, ","),
-                    text.trim().replace("-->", "->")
-                );
+                    fragments.push(fragment);
+                }
 
-                fragments.push(fragment);
-            }
+                let transcription = fragments.join("\n");
 
-            let transcription = fragments.join("\n");
+                std::fs::write(&save_to, &transcription).context("Failed writing transcription file")?;
 
-            std::fs::write(&save_to, &transcription).expect("Failed writing buffer");
+                anyhow::Ok(transcription)
+            })();
+
+            let transcription = match transcription {
+                Ok(transcription) => transcription,
+                Err(err) => {
+                    util::emit_all(&w, "app://notification", serde_json::json!({
+                        "type": "error",
+                        "value": format!("Failed transcribing because: {err}, please report this issue!")
+                    }));
+
+                    util::emit_all(&w, transcription_uuid, serde_json::json!({
+                        "type": "finish_failed",
+                        "value": ""
+                    }));
+
+                    return;
+                },
+            };
 
             let _ = (|| {
                 use lettre::Transport as _;
@@ -389,7 +410,7 @@ Have a good day!
                         eprintln!("Failed to send email: {e}");
                         util::emit_all(&w, "app://notification", serde_json::json!({
                             "type": "error",
-                            "value": format!("Unable email transcription because:\n{e}")
+                            "value": format!("Failed to send transcription via email because:\n{e}")
                         }));
                     }
                 }
