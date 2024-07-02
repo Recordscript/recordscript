@@ -6,18 +6,20 @@
     "distDir": "../dist"
   },
   "package": {
-    "productName": "screen-audio-recorder-test",
+    "productName": "Recordscript",
     "version": "0.0.1"
   },
   "tauri": {
     "allowlist": {
       "all": true,
       "shell": {
-          "all": true
+        "all": true
       },
       "fs": {
         "readFile": true,
-        "scope": ["**"]
+        "scope": [
+          "**"
+        ]
       }
     },
     "windows": [
@@ -25,7 +27,7 @@
         "label": "main",
         "fullscreen": false,
         "resizable": true,
-        "title": "Transcriber",
+        "title": "Recordscript",
         "width": 800,
         "height": 700,
         "minWidth": 800,
@@ -54,7 +56,7 @@
     "bundle": {
       "active": true,
       "targets": "all",
-      "identifier": "ai.firstsupport.transcriber",
+      "identifier": "com.recordscript.Recordscript",
       "icon": [
         "icons/32x32.png",
         "icons/128x128.png",

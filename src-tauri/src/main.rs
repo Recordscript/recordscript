@@ -1,5 +1,5 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
-// #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use core::panic;
 use std::{collections::HashMap, fs::File, io::Write, ops::{Deref, DerefMut}, process, sync::{atomic::{self, AtomicBool, AtomicPtr}, Arc, Mutex}, thread, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
@@ -152,7 +152,7 @@ fn set_smtp_config(config_state: State<'_, SMTPConfig>, config: configuration::S
 }
 
 fn project_directory() -> ProjectDirs {
-    directories::ProjectDirs::from("ai.firstsupport", "Firstsupport AI", "Transcriber PoC").expect("Cannot use app directory")
+    directories::ProjectDirs::from("com.recordscript", "Recordscript", "Recordscript").expect("Cannot use app directory")
 }
 
 #[tauri::command]
@@ -465,11 +465,15 @@ fn main() {
                                                 let frame = match unsafe { &mut *capturer.load(atomic::Ordering::Acquire) }.frame(Duration::ZERO) {
                                                     Ok(frame) => frame,
                                                     Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => continue,
+                                                    Err(err) if err.kind() == std::io::ErrorKind::InvalidData => {
+                                                        eprintln!("Received invalid data, skipping");
+                                                        continue
+                                                    },
                                                     Err(err) => panic!("{err}"),
                                                 };
 
                                                 let scrap::Frame::PixelBuffer(pixel_buffer) = frame else {
-                                                    println!("Received frame is not PixelBuffer, skipping");
+                                                    eprintln!("Received frame is not PixelBuffer, skipping");
                                                     continue
                                                 };
 
