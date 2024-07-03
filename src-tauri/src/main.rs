@@ -578,6 +578,7 @@ fn main() {
                             window.emit("app://recording_state", "start").unwrap();
                         },
                         recorder::RecordCommand::Stop => {
+                            window.unminimize().unwrap();
                             window.set_focus().unwrap();
 
                             recorder_control_window.set_content_protected(false).unwrap();
