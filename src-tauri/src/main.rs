@@ -309,9 +309,11 @@ fn main() {
             let transcriber = transcriber.clone();
 
             thread::spawn(move || {
-                let mut recorder : Vec<(Arc<AtomicBool>, gst::Pipeline)>= vec![];
                 let media_data = Arc::new(Mutex::new(Vec::<u8>::new()));
                 let mut output_name = String::new();
+
+                let mut should_stop: Option<Arc<AtomicBool>> = None;
+                let mut running_pipeline: Option<gst::Pipeline> = None;
         
                 loop {
                     let Some(command) = record_rx.blocking_recv() else { continue };
@@ -320,7 +322,7 @@ fn main() {
                         recorder::RecordCommand::Start(selected_device) => {
                             let recording_duration = Instant::now();
 
-                            let should_stop = Arc::new(AtomicBool::new(false));
+                            should_stop = Some(Arc::new(AtomicBool::new(false)));
                             
                             let mut pipeline_description = Vec::new();
 
@@ -425,7 +427,7 @@ fn main() {
     
                                             let _ = source.push_buffer(buffer);
                                         
-                                            if should_stop.load(atomic::Ordering::Acquire) {
+                                            if should_stop.clone().unwrap().load(atomic::Ordering::Acquire) {
                                                 println!("Stopping audio recorder");
                                                 source.end_of_stream().unwrap();
                                                 return;
@@ -456,7 +458,7 @@ fn main() {
                                     
                                         move |source, _| {
                                             let pixel_buffer = loop {
-                                                if should_stop.load(atomic::Ordering::Acquire) {
+                                                if should_stop.clone().unwrap().load(atomic::Ordering::Acquire) {
                                                     println!("Stopping video recorder");
                                                     source.end_of_stream().unwrap();
                                                     return;
@@ -552,23 +554,21 @@ fn main() {
                                     println!("Closing pipeline");
                                 }
                             });
-    
-                            recorder.push((should_stop, pipeline));
+
+                            running_pipeline = Some(pipeline);
 
                             recorder_control_window.show().unwrap();
                             window.emit("app://recording_state", "start").unwrap();
                         },
                         recorder::RecordCommand::Pause => {
-                            for (_, pipeline) in &recorder {
-                                println!("Pausing pipeline");
+                            if let Some(pipeline) = &running_pipeline {
                                 pipeline.set_state(gst::State::Paused).unwrap();
                             }
 
                             window.emit("app://recording_state", "pause").unwrap();
                         },
                         recorder::RecordCommand::Resume => {
-                            for (_, pipeline) in &recorder {
-                                println!("Resuming pipeline");
+                            if let Some(pipeline) = &running_pipeline {
                                 pipeline.set_state(gst::State::Playing).unwrap();
                             }
 
@@ -576,16 +576,18 @@ fn main() {
                         },
                         recorder::RecordCommand::Stop => {
                             recorder_control_window.hide().unwrap();
+                            window.emit("app://recording_state", "stop").unwrap();
 
-                            for (should_stop, pipeline) in &mut recorder {
-                                should_stop.store(true, atomic::Ordering::Relaxed);
+                            if should_stop.as_ref().map(|v| v.load(atomic::Ordering::Relaxed)).unwrap_or(true) { continue };
+                            if let Some(v) = &should_stop { v.store(true, atomic::Ordering::Relaxed) };
 
+                            if let Some(pipeline) = running_pipeline {
                                 while pipeline.current_state() != gst::State::Null {
                                     std::thread::yield_now();
                                 }
+                            } else {
+                                continue;
                             }
-
-                            window.emit("app://recording_state", "stop").unwrap();
 
                             let mut media_data = media_data.lock().unwrap();
 
@@ -593,7 +595,7 @@ fn main() {
                             media_data.swap_with_slice(&mut data);
                             media_data.clear();
 
-                            recorder.clear();
+                            running_pipeline = None;
 
                             let general_config = general_config.lock().unwrap().clone();
                             let video_output_path = &general_config.save_to.save_path.join(format!("{output_name}.mp4"));
