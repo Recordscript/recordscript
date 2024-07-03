@@ -494,7 +494,7 @@ fn main() {
                                 input_callbacks.push((video_input_name.to_owned(), video_input_callbacks));
                             }
 
-                            pipeline_description.push("mp4mux name=mux ! appsink name=output".to_string());
+                            pipeline_description.push("mp4mux name=mux faststart=true ! appsink name=output".to_string());
 
                             println!("Starting pipeline with description: {}", replace_multiple_whitespace(&pipeline_description.join("|")));
 
