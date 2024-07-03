@@ -558,6 +558,9 @@ fn main() {
                             running_pipeline = Some(pipeline);
 
                             recorder_control_window.show().unwrap();
+                            recorder_control_window.set_always_on_top(true).unwrap();
+                            recorder_control_window.set_content_protected(true).unwrap();
+
                             window.emit("app://recording_state", "start").unwrap();
                         },
                         recorder::RecordCommand::Pause => {
@@ -577,7 +580,10 @@ fn main() {
                         recorder::RecordCommand::Stop => {
                             window.set_focus().unwrap();
 
+                            recorder_control_window.set_content_protected(false).unwrap();
                             recorder_control_window.hide().unwrap();
+                            recorder_control_window.set_always_on_top(false).unwrap();
+
                             window.emit("app://recording_state", "stop").unwrap();
 
                             if should_stop.as_ref().map(|v| v.load(atomic::Ordering::Relaxed)).unwrap_or(true) { continue };
