@@ -15,7 +15,7 @@ use strum::IntoEnumIterator;
 use tauri::{async_runtime::channel, Manager, State, Window};
 use gst::{glib::uuid_string_random, prelude::*};
 
-use crate::util::{gstreamer_loop, replace_multiple_whitespace};
+use crate::{recorder::DeviceEq, util::{gstreamer_loop, replace_multiple_whitespace}};
 
 pub mod configuration;
 mod recorder;
@@ -57,17 +57,18 @@ fn list_speaker(selected_device: State<'_, SelectedDevice>) -> Vec<recorder::Dev
 
 #[tauri::command]
 fn list_screen(selected_device: State<'_, SelectedDevice>) -> Vec<recorder::DeviceResult> {
-    // let default_device = selected_device.lock().unwrap().
+    let default_device = &selected_device.lock().unwrap().screen;
 
     recorder::list_screen().unwrap_or_default().into_iter()
         .enumerate()
         .map(|(index, screen)|
             recorder::DeviceResult {
                 name: screen.name(),
-                is_selected: index == 0
-            })
+                is_selected: screen.eq_device(default_device),
+             })
         .collect()
 }
+
 
 #[tauri::command]
 fn select_microphone(selected_device: State<'_, SelectedDevice>, device_name: String) {
@@ -100,6 +101,17 @@ fn select_screen(selected_device: State<'_, SelectedDevice>, device_name: String
     println!("Switching screen to {device_name:?}");
     
     selected_device.lock().unwrap().screen = device;
+}
+
+#[tauri::command]
+fn preview_screen(device_name: String) -> String {
+    let screen = recorder::Screen::all().unwrap().into_iter()
+        .find(|screen| screen.name() == &device_name).unwrap();
+
+    let preview = screen.preview().unwrap();
+    let encoded = gst::glib::base64_encode(&preview);
+
+    encoded.to_string()
 }
 
 #[tauri::command]
@@ -294,6 +306,7 @@ fn main() {
             select_microphone,
             select_speaker,
             select_screen,
+            preview_screen,
             get_general_config,
             set_general_config,
             get_smtp_config,

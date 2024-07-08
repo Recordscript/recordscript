@@ -1,6 +1,8 @@
+use std::{sync::{atomic::{self, AtomicPtr}, Arc, Mutex}, time::Duration};
+
 use anyhow::Result;
 use cpal::{traits::{DeviceTrait, HostTrait}, Device, Host};
-use scrap::Display;
+use scrap::{Display, TraitCapturer, TraitPixelBuffer};
 use strum_macros::{EnumIter, IntoStaticStr};
 
 #[derive(Debug, Clone, Copy, Eq, Hash, PartialEq, EnumIter, IntoStaticStr)]
@@ -99,5 +101,105 @@ pub fn list_speaker() -> Vec<Device> {
 
 pub fn list_screen() -> anyhow::Result<Vec<Display>> {
     Ok(scrap::Display::all()?)
+}
+
+pub struct Screen {
+    name: String,
+    display: Display,
+}
+
+impl Screen {
+    pub fn name(&self) -> &String {
+        &self.name
+    }
+
+    /// Return PNG encoded screen preview
+    pub fn preview(&self) -> anyhow::Result<Vec<u8>> {
+        use gst::prelude::*;
+        use scrap::Capturer;
+
+        let mut capturer = Capturer::new(self.display.clone_device()).unwrap();
+
+        let width;
+        let height;
+        let data;
+        
+        loop {
+            let frame = match capturer.frame(Duration::ZERO) {
+                Ok(frame) => frame,
+                Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => continue,
+                Err(err) if err.kind() == std::io::ErrorKind::InvalidData => {
+                    eprintln!("Received invalid data, skipping");
+                    continue
+                },
+                Err(err) => panic!("{err}"),
+            };
+
+            let scrap::Frame::PixelBuffer(pixel_buffer) = frame else {
+                eprintln!("Received frame is not PixelBuffer, skipping");
+                continue
+            };
+
+            width = pixel_buffer.width();
+            height = pixel_buffer.height();
+            data = pixel_buffer.data().to_vec();
+
+            break;
+        };
+
+        let pipeline =
+            gst::parse::launch("appsrc name=input ! videoconvert ! pngenc ! appsink name=output").unwrap()
+                .dynamic_cast::<gst::Pipeline>().unwrap();
+
+        pipeline.by_name("input").unwrap().dynamic_cast::<gst_app::AppSrc>().unwrap()
+            .set_callbacks(gst_app::AppSrcCallbacks::builder()
+                .need_data(move |source, _| {
+                    let caps = gst::Caps::builder("video/x-raw")
+                        .field("format", "BGRx")
+                        .field("width", width as i32)
+                        .field("height", height as i32)
+                        .build();
+
+                    source.set_caps(Some(&caps));
+
+                    let buffer = gst::Buffer::from_slice(data.clone());
+
+                    let _ = source.push_buffer(buffer);
+
+                    source.end_of_stream().unwrap();
+                }).build());
+
+        let preview = Arc::new(Mutex::new(None));
+
+        pipeline.by_name("output").unwrap().dynamic_cast::<gst_app::AppSink>().unwrap()
+            .set_callbacks(gst_app::AppSinkCallbacks::builder()
+                .new_sample({
+                    let preview = preview.clone();
+
+                    move |sink| {
+                        let Ok(sample) = sink.pull_sample() else { return Err(gst::FlowError::Error) };
+
+                        let buffer = sample.buffer().unwrap();
+                        let mapped_buffer = buffer.map_readable().unwrap();
+
+                        let encoded_preview = mapped_buffer.as_slice();
+
+                        *preview.lock().unwrap() = Some(encoded_preview.to_vec());
+
+                        Ok(gst::FlowSuccess::Ok)
+                    }
+                }).build());
+
+        crate::util::gstreamer_loop(pipeline, |_| { false })?;
+
+        let preview = preview.lock().unwrap();
+
+        Ok(preview.clone().unwrap())
+    }
+
+    pub fn all() -> anyhow::Result<Vec<Self>> {
+        Ok(list_screen()?.into_iter()
+            .map(|d| Self { name: d.name(), display: d }).collect())
+    }
 }
 

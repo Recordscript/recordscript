@@ -236,7 +236,7 @@ function EmailConfigurator<P extends { on_save: () => void }>(props: P) {
                     </div>
                 </section>
                 <a
-                    class="text-xs text-blue-500 underline"
+                    class="text-xs text-blue-500 underline w-fit"
                     href={config.smtp_article_url}
                     target="_blank"
                 >
@@ -246,7 +246,7 @@ function EmailConfigurator<P extends { on_save: () => void }>(props: P) {
             <div class="w-full h-full flex items-end">
                 <button
                     onClick={on_save}
-                    class="border rounded py-2 cursor-pointer font-bold text-xs w-full"
+                    class="border rounded py-2 cursor-pointer font-bold text-xs w-full mt-5"
                 >
                     Save
                 </button>
@@ -550,6 +550,44 @@ function App() {
         });
     }
 
+    function ScreenSelector() {
+        function Screen<P extends { name: string; display_name: string; selected?: boolean }>(props: P) {
+            const [preview] = createInvokeResource<string>("preview_screen", { deviceName: props.name });
+
+            return <button class={`rounded p-2 outline outline-0 ${props.selected ? "bg-blue-50 !outline-2 outline-blue-300" : "hover:bg-blue-50 hover:outline-2 hover:outline-gray-300"}`}
+            onClick={(_) => {
+                set_screen(props.name);
+            }}>
+                <img class="max-w-64 rounded" src={`data:image/png;base64,${preview()}`}/>
+                <span class="text-sm">{props.display_name}</span>
+            </button>
+        }
+        return (
+            <div class="flex flex-col">
+                <h2 class="p-2 text-xl font-bold h-fit">Select your screen</h2>
+                <hr class="" />
+                <div class="p-2 flex flex-wrap justify-center content-start gap-2">
+                    <Suspense>
+                        <For each={screens()!}>
+                            {(device, idx) => (
+                                <Screen name={device.name} display_name={`Screen ${idx() + 1}`} selected={screen() ? screen() === device.name : device.is_selected} />
+                            )}
+                        </For>
+                    </Suspense>
+                </div>
+                <button
+                    onClick={() => {
+                        set_popup(null);
+                        recording.start();
+                    }}
+                    class="w-full h-full max-h-[3rem] border border-x-transparent font-bold p-2 cursor-pointer"
+                >
+                    Start Recording
+                </button>
+            </div>
+        )
+    }
+
     return (
         <main class="flex flex-col h-screen justify-start">
             <Show when={popup()} keyed>
@@ -561,7 +599,7 @@ function App() {
                         class="fixed flex justify-center items-center w-screen h-screen bg-black bg-opacity-50"
                     >
                         <div
-                            class="bg-white sm:w-2/3 lg:w-1/2 h-2/3 rounded overflow-y-scroll"
+                            class="bg-white sm:w-2/3 lg:w-1/2 h-fit rounded overflow-y-scroll"
                             onClick={(event) => event.stopPropagation()}
                         >
                             {popup}
@@ -623,24 +661,24 @@ function App() {
                             </Suspense>
                         </select>
                     </section>
-                    <section class="flex items-center gap-2">
-                        <h3 class="text-sm font-bold my-0 h-fit w-32">Screen</h3>
-                        <select
-                            class="border p-1 text-xs w-full"
-                            disabled={screens.loading}
-                            onchange={(e) => set_screen(e.target.value)}
-                        >
-                            <Suspense>
-                                <For each={screens()!}>
-                                    {(device) => (
-                                        <option value={device.name} selected={device.is_selected}>
-                                            {device.name}
-                                        </option>
-                                    )}
-                                </For>
-                            </Suspense>
-                        </select>
-                    </section>
+                    {/* <section class="flex items-center gap-2"> */}
+                    {/*     <h3 class="text-sm font-bold my-0 h-fit w-32">Screen</h3> */}
+                    {/*     <select */}
+                    {/*         class="border p-1 text-xs w-full" */}
+                    {/*         disabled={screens.loading} */}
+                    {/*         onchange={(e) => set_screen(e.target.value)} */}
+                    {/*     > */}
+                    {/*         <Suspense> */}
+                    {/*             <For each={screens()!}> */}
+                    {/*                 {(device) => ( */}
+                    {/*                     <option value={device.name} selected={device.is_selected}> */}
+                    {/*                         {device.name} */}
+                    {/*                     </option> */}
+                    {/*                 )} */}
+                    {/*             </For> */}
+                    {/*         </Suspense> */}
+                    {/*     </select> */}
+                    {/* </section> */}
                     <section class="flex items-center gap-2">
                         <h3 class="text-sm font-bold my-0 h-fit w-32">Transcript</h3>
                         <input type="checkbox" onchange={(e) => update_is_transcript(e.target.checked)} checked={general_config()?.transcript} />
@@ -798,7 +836,7 @@ function App() {
                     </Match>
                     <Match when={recording_state() === RecorderState.Stopped}>
                         <button
-                            onclick={recording.start}
+                            onclick={() => set_popup(ScreenSelector())}
                             class="w-full h-full max-h-[3rem] border border-x-transparent font-bold p-2 cursor-pointer"
                         >
                             Start Recording
