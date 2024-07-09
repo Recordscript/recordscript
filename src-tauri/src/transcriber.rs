@@ -246,7 +246,7 @@ impl Transcriber {
     }
 
     /// `media_data` accept media in any format
-    pub fn transcribe(&self, window: &Window, media_data: Vec<u8>, general_config: super::configuration::GeneralConfig, smtp_config: super::configuration::SMTPConfig, save_to: PathBuf) {
+    pub fn transcribe(&self, window: &Window, media_data: Vec<u8>, general_config: super::configuration::GeneralConfig, smtp_config: super::configuration::SMTPConfig, save_to: PathBuf, email: bool) {
         println!("Using model {:?}", self.model);
 
         if !self.model.is_downloaded() {
@@ -257,7 +257,7 @@ impl Transcriber {
 
         let transcription_uuid = uuid_string_random().to_string();
 
-        util::emit_all(&window, "app://transcriber_start", transcription_uuid.clone());
+        util::emit_all(window, "app://transcriber_start", transcription_uuid.clone());
 
         // let mut ctx = self.ctx.lock().unwrap();
         //
@@ -338,6 +338,8 @@ impl Transcriber {
             };
 
             let _ = (|| {
+                if !email { return Ok(()) };
+
                 use lettre::Transport as _;
                 use lettre::message::{ header, Attachment, SinglePart, MultiPart };
 

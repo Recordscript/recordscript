@@ -21,6 +21,10 @@ import config from "./config.json";
 import { ReactiveMap } from "@solid-primitives/map";
 import { emit } from "@tauri-apps/api/event";
 
+import logo from "./assets/logo.png";
+import github_mark from "./assets/github-mark.svg";
+import { getName, getVersion } from "@tauri-apps/api/app";
+
 interface DeviceResult {
     name: string;
     is_selected: boolean;
@@ -45,6 +49,11 @@ enum RecorderState {
     Paused,
 }
 
+enum BuildType {
+    Debug = "Debug",
+    Release = "Release",
+}
+
 interface EventResult {
     type: string;
     value: any;
@@ -67,6 +76,12 @@ interface SMTPConfig {
     username: string;
     password: string;
     from: string;
+}
+
+enum ActiveTab {
+    Recorder,
+    Transcribe,
+    About,
 }
 
 function createInvokeResource<R>(cmd: string, args?: InvokeArgs) {
@@ -290,6 +305,7 @@ function NotificationInfo<P extends { title: string; message: string, override_o
 function App() {
     const [popup, set_popup] = createSignal<JSX.Element | null>(null);
     const [notification, set_notification] = createSignal<JSX.Element[]>([]);
+    const [active_tab, set_active_tab] = createSignal<ActiveTab>(ActiveTab.Recorder);
 
     const [microphone, set_microphone] = createSignal<string | null>(null);
     const [speaker, set_speaker] = createSignal<string | null>(null);
@@ -588,6 +604,397 @@ function App() {
         )
     }
 
+    function ListModelSection() {
+        return (
+            <section class="flex items-center gap-2">
+                <h3 class="text-sm font-bold my-0 h-fit w-32">Model</h3>
+                <div class="flex flex-col w-full">
+                    <select
+                        class="border p-1 text-xs w-full"
+                        onchange={(e) => set_model(parseInt(e.target.value))}
+                    >
+                        <Suspense>
+                            <For each={models()!}>
+                                {(m, i) => (
+                                    <option value={i()} selected={i() === model()}>
+                                        {m.name}
+                                    </option>
+                                )}
+                            </For>
+                        </Suspense>
+                    </select>
+                    <Suspense>
+                        <Show
+                            when={model() !== null && !models()?.[model()!].is_downloaded}
+                        >
+                            <Switch>
+                                <Match when={model_state() === ModelState.Downloading}>
+                                    <button
+                                        class="border rounded py-2 text-xs"
+                                        disabled
+                                    >
+                                        Downloading %{model_download_progress()}
+                                    </button>
+                                </Match>
+                                <Match when={model_state() === ModelState.Stopped}>
+                                    <button
+                                        class="border rounded py-2 cursor-pointer text-xs"
+                                        onclick={download_selected_model}
+                                    >
+                                        Download
+                                    </button>
+                                </Match>
+                            </Switch>
+                        </Show>
+                    </Suspense>
+                </div>
+            </section>
+        )
+    }
+
+    function ListLanguageSection() {
+        return (
+            <section class="flex items-center gap-2">
+                <h3 class="text-sm font-bold my-0 h-fit w-32">Language</h3>
+                <select
+                    class="border p-1 text-xs w-full"
+                    onchange={(e) => set_language(e.target.value)}
+                >
+                    <option value="auto">Auto</option>
+                    <For each={languages}>
+                        {([display, id]) => <option value={id}>{display}</option>}
+                    </For>
+                </select>
+            </section>
+
+        )
+    }
+
+    function TranscriptionSaveToSection<P extends { title_class?: string; }>(props: P) {
+        return (
+            <section class="flex items-center gap-2">
+                <h3 class={`text-sm font-bold my-0 h-fit w-52 ${props.title_class}`}>
+                    Save To
+                </h3>
+                <div class="flex flex-col w-full gap-1">
+                    <select
+                        class="border p-1 text-xs w-full"
+                        onchange={(e) => update_save_to_path_with(e.target.value)}
+                    >
+                        <Show when={general_config() !== undefined}>
+                            <For
+                                each={general_config()!.save_to.save_path_histories}
+                            >
+                                {(path) => (
+                                    <option
+                                        value={path}
+                                        selected={general_config()!.save_to.save_path ===
+                                            path}
+                                    >
+                                        {path}
+                                    </option>
+                                )}
+                            </For>
+                        </Show>
+                    </select>
+                    <button
+                        onclick={update_save_to_path}
+                        class="border rounded py-2 cursor-pointer text-xs"
+                    >
+                        Browse
+                    </button>
+                </div>
+            </section>
+        )
+    }
+
+    function Recorder() {
+        return (
+            <div class="flex flex-col gap-3 h-full">
+                <div class="m-3">
+                    <h2 class="text-xl font-bold h-fit">Device Configuration</h2>
+                    <hr class="my-2" />
+                    <div class="flex flex-col gap-1">
+                        <section class="flex items-center gap-2">
+                            <h3 class="text-sm font-bold my-0 h-fit w-32">Microphone</h3>
+                            <select
+                                class="border p-1 text-xs w-full"
+                                disabled={microphones.loading}
+                                onchange={(e) => set_microphone(e.target.value)}
+                            >
+                                <Suspense>
+                                    <For each={microphones()!}>
+                                        {(device) => (
+                                            <option value={device.name} selected={device.is_selected}>
+                                                {device.name}
+                                            </option>
+                                        )}
+                                    </For>
+                                </Suspense>
+                            </select>
+                        </section>
+                        <section class="flex items-center gap-2">
+                            <h3 class="text-sm font-bold my-0 h-fit w-32">Speaker</h3>
+                            <select
+                                class="border p-1 text-xs w-full"
+                                disabled={speakers.loading}
+                                onchange={(e) => set_speaker(e.target.value)}
+                            >
+                                <Suspense>
+                                    <For each={speakers()!}>
+                                        {(device) => (
+                                            <option value={device.name} selected={device.is_selected}>
+                                                {device.name}
+                                            </option>
+                                        )}
+                                    </For>
+                                </Suspense>
+                            </select>
+                        </section>
+                        {/* <section class="flex items-center gap-2"> */}
+                        {/*     <h3 class="text-sm font-bold my-0 h-fit w-32">Screen</h3> */}
+                        {/*     <select */}
+                        {/*         class="border p-1 text-xs w-full" */}
+                        {/*         disabled={screens.loading} */}
+                        {/*         onchange={(e) => set_screen(e.target.value)} */}
+                        {/*     > */}
+                        {/*         <Suspense> */}
+                        {/*             <For each={screens()!}> */}
+                        {/*                 {(device) => ( */}
+                        {/*                     <option value={device.name} selected={device.is_selected}> */}
+                        {/*                         {device.name} */}
+                        {/*                     </option> */}
+                        {/*                 )} */}
+                        {/*             </For> */}
+                        {/*         </Suspense> */}
+                        {/*     </select> */}
+                        {/* </section> */}
+                        <section class="flex items-center gap-2">
+                            <h3 class="text-sm font-bold my-0 h-fit w-32">Transcript</h3>
+                            <input type="checkbox" onchange={(e) => update_is_transcript(e.target.checked)} checked={general_config()?.transcript} />
+                        </section>
+                    </div>
+                </div>
+                <Show when={general_config()?.transcript}>
+                    <div class="m-3">
+                        <h2 class="text-xl font-bold h-fit">Transcriber Configuration</h2>
+                        <hr class="my-2" />
+                        <div class="flex flex-col gap-1">
+                            <ListModelSection />
+                            <ListLanguageSection />
+                        </div>
+                    </div>
+                </Show>
+                <div class="m-3">
+                    <h2 class="text-xl font-bold h-fit">General Configuration</h2>
+                    <hr class="my-2" />
+                    <div class="flex flex-col gap-1">
+                        <TranscriptionSaveToSection />
+                        <Show when={general_config()?.transcript}>
+                            <section class="flex items-center gap-2">
+                                <h3 class="text-sm font-bold my-0 h-fit w-52">
+                                    Email Transcription To
+                                </h3>
+                                <div class="flex flex-col w-full gap-1">
+                                    <span class="absolute text-xs ml-1 mb-[-7px] px-2 z-30 bg-white w-fit text-red-800">
+                                    </span>
+                                    <input
+                                        type="text"
+                                        class="border rounded p-2 text-xs disabled:bg-gray-50 mt-2"
+                                        onchange={(event) => {
+                                            set_transcription_email_to(event.currentTarget.value);
+                                        }}
+                                        placeholder="email@example.com,email2@example.com,other@neighbour.com"
+                                        value={smtp_config()?.host
+                                            ? general_config()?.transcription_email_to
+                                            : "SMTP server is not configured"}
+                                        disabled={!smtp_config()?.host}
+                                    />
+                                    <button
+                                        onClick={on_email_configuration_click}
+                                        class="border rounded py-2 cursor-pointer text-xs"
+                                    >
+                                        Configure
+                                    </button>
+                                </div>
+                            </section>
+                        </Show>
+                    </div>
+                </div>
+                <div class="w-full h-full flex items-end">
+                    <Switch>
+                        <Match when={model() !== null && !models()?.[model()!].can_run}>
+                            <button
+                                class="w-full h-full max-h-[3rem] border border-x-transparent font-bold p-2 cursor-default"
+                                disabled
+                            >
+                                You need more ram to run this model ({!models()?.[model()!].mem_usage} MB)
+                            </button>
+                        </Match>
+                        <Match when={general_config()?.transcript && model() !== null && !models()?.[model()!].is_downloaded}>
+                            <button
+                                class="w-full h-full max-h-[3rem] border border-x-transparent font-bold p-2 cursor-default"
+                                disabled
+                            >
+                                The model hasn't been downloaded
+                            </button>
+                        </Match>
+                        <Match when={recording_state() === RecorderState.Stopped}>
+                            <button
+                                onclick={() => set_popup(ScreenSelector())}
+                                class="w-full h-full max-h-[3rem] border border-x-transparent font-bold p-2 cursor-pointer"
+                            >
+                                Start Recording
+                            </button>
+                        </Match>
+                        <Match when={recording_state() === RecorderState.Paused}>
+                            <button
+                                onclick={recording.resume}
+                                class="w-full h-full max-h-[3rem] border border-x-transparent font-bold p-2 cursor-pointer"
+                            >
+                                Resume Recording
+                            </button>
+                        </Match>
+                        <Match when={recording_state() === RecorderState.Running}>
+                            <button
+                                onclick={recording.stop}
+                                class="w-full h-full max-h-[3rem] border border-x-transparent font-bold p-2 cursor-pointer"
+                            >
+                                Stop Recording
+                            </button>
+                        </Match>
+                    </Switch>
+                </div>
+                {/* <div class="flex justify-between text-xs m-1"> */}
+                {/*     <a class="text-blue-500 underline w-fit" target="_blank" href="https://forms.gle/PTs2WGgpidwNeXkLA">Feedback or need support?</a> */}
+                {/*     <div class="flex items-center gap-2"> */}
+                {/*         <span>&copy;Recordscript</span> */}
+                {/*         <div class="border-r">&#8203;</div> */}
+                {/*         <a class="text-blue-500 underline w-fit" target="_blank" href="https://forms.gle/PTs2WGgpidwNeXkLA">GitHub</a> */}
+                {/*     </div> */}
+                {/* </div> */}
+            </div>
+        )
+    }
+
+    function Transcribe() {
+        const [file, set_file] = createSignal<string | null>(null);
+        const [file_histories, set_file_histories] = createSignal<string[]>([]);
+
+        async function update_file_path() {
+            let result = await dialog.open({
+                multiple: false,
+                directory: false,
+                filters: [
+                    {
+                        name: "Media",
+                        extensions: [
+                              "aac", "flac", "m4a", "mp3", "oga", "ogg", "wav",
+                              "mp4", "mkv", "webm", "3gp"
+                        ],
+                    },
+                ],
+                title: "Choose file to transcribe",
+            });
+
+            let path = result as string ?? null;
+
+            if (path === null) return;
+
+            console.log({ path });
+
+            set_file(path);
+            
+            set_file_histories((old) => {
+                old.push(path);
+
+                old = [
+                    ...new Set([
+                        ...old,
+                    ]),
+                ];
+
+                return old;
+            });
+        }
+
+        return (
+            <div class="flex flex-col h-full">
+                <div class="flex flex-col gap-2 m-2">
+                    <section class="flex items-center gap-2">
+                        <h3 class="text-sm font-bold my-0 h-fit w-32">
+                            Choose File
+                        </h3>
+                        <div class="flex flex-col w-full gap-1">
+                            <select
+                                class="border p-1 text-xs w-full"
+                                onchange={(e) => {
+                                    set_file(e.target.value);
+                                    console.log(file())
+                                }}
+                            >
+                                <For
+                                    each={file_histories()}
+                                >
+                                    {(path) => (
+                                        <option
+                                            value={path}
+                                            selected={file() === path}
+                                        >
+                                            {path}
+                                        </option>
+                                    )}
+                                </For>
+                            </select>
+                            <button
+                                onclick={update_file_path}
+                                class="border rounded py-2 cursor-pointer text-xs"
+                            >
+                                Browse
+                            </button>
+                        </div>
+                    </section>
+                <ListModelSection />
+                <ListLanguageSection />
+                <TranscriptionSaveToSection title_class="!w-32" />
+                </div>
+                <div class="h-full flex items-end">
+                    <button
+                        onClick={async () => {
+                            await invoke("start_transcription", { mediaPath: file() });
+                        }}
+                        class="w-full h-full max-h-[3rem] border border-x-transparent font-bold p-2 cursor-pointer disabled:opacity-50 disabled:cursor-default"
+                        disabled={file() === null}
+                    >
+                        Transcribe
+                    </button>
+                </div>
+            </div>
+        )
+    }
+
+    function About() {
+        const [name] = createResource(getName);
+        const [version] = createResource(getVersion);
+        const [build_type] = createInvokeResource<BuildType>("build_type");
+
+        return (
+            <div class="flex flex-col items-center h-full gap-5 select-none">
+                <img src={logo} class="max-w-36 mt-6 pointer-events-none" />
+                <div class="text-center">
+                    <h1 class="text-2xl font-black select-text">{name()}</h1>
+                    <span class={`text-xs ${build_type() === BuildType.Debug ? "bg-red-500" : "bg-blue-500"} text-white px-4 rounded-lg select-text`}>{build_type()} v{version()}</span>
+                </div>
+                <div class="flex flex-col gap-2">
+                    <a class="border text-sm px-3 py-2 text-center" target="_blank" href={config.smtp_article_url}>Support or Feature Request</a>
+                    <a class="border text-sm px-3 py-2 text-center" target="_blank" href={config.github_repository_url}>GitHub</a>
+                </div>
+                <p class="text-sm font-bold flex items-center">Support our open-source by sponsoring us on <img class="h-4 mx-1 object-cover" src={github_mark} /> GitHub!</p>
+                <span class="text-xs">&copy; Recordscript. 2024</span>
+            </div>
+        )
+    }
+
     return (
         <main class="flex flex-col h-screen justify-start">
             <Show when={popup()} keyed>
@@ -621,246 +1028,26 @@ function App() {
                     )}
                 </For>
             </div>
-            <div class="m-2">
-                <h2 class="text-xl font-bold h-fit">Device Configuration</h2>
-                <hr class="my-2" />
-                <div class="flex flex-col gap-1">
-                    <section class="flex items-center gap-2">
-                        <h3 class="text-sm font-bold my-0 h-fit w-32">Microphone</h3>
-                        <select
-                            class="border p-1 text-xs w-full"
-                            disabled={microphones.loading}
-                            onchange={(e) => set_microphone(e.target.value)}
-                        >
-                            <Suspense>
-                                <For each={microphones()!}>
-                                    {(device) => (
-                                        <option value={device.name} selected={device.is_selected}>
-                                            {device.name}
-                                        </option>
-                                    )}
-                                </For>
-                            </Suspense>
-                        </select>
-                    </section>
-                    <section class="flex items-center gap-2">
-                        <h3 class="text-sm font-bold my-0 h-fit w-32">Speaker</h3>
-                        <select
-                            class="border p-1 text-xs w-full"
-                            disabled={speakers.loading}
-                            onchange={(e) => set_speaker(e.target.value)}
-                        >
-                            <Suspense>
-                                <For each={speakers()!}>
-                                    {(device) => (
-                                        <option value={device.name} selected={device.is_selected}>
-                                            {device.name}
-                                        </option>
-                                    )}
-                                </For>
-                            </Suspense>
-                        </select>
-                    </section>
-                    {/* <section class="flex items-center gap-2"> */}
-                    {/*     <h3 class="text-sm font-bold my-0 h-fit w-32">Screen</h3> */}
-                    {/*     <select */}
-                    {/*         class="border p-1 text-xs w-full" */}
-                    {/*         disabled={screens.loading} */}
-                    {/*         onchange={(e) => set_screen(e.target.value)} */}
-                    {/*     > */}
-                    {/*         <Suspense> */}
-                    {/*             <For each={screens()!}> */}
-                    {/*                 {(device) => ( */}
-                    {/*                     <option value={device.name} selected={device.is_selected}> */}
-                    {/*                         {device.name} */}
-                    {/*                     </option> */}
-                    {/*                 )} */}
-                    {/*             </For> */}
-                    {/*         </Suspense> */}
-                    {/*     </select> */}
-                    {/* </section> */}
-                    <section class="flex items-center gap-2">
-                        <h3 class="text-sm font-bold my-0 h-fit w-32">Transcript</h3>
-                        <input type="checkbox" onchange={(e) => update_is_transcript(e.target.checked)} checked={general_config()?.transcript} />
-                    </section>
+            <div class="flex justify-center">
+                <div class="flex text-sm border border-b-transparent overflow-hidden w-full justify-evenly">
+                    <button onClick={() => set_active_tab(ActiveTab.Recorder)} class={`border-b py-1 px-2 w-full ${active_tab() === ActiveTab.Recorder ? "border-blue-400 text-blue-400" : "hover:bg-gray-50"}`}>Recorder</button>
+                    <button onClick={() => set_active_tab(ActiveTab.Transcribe)} class={`border-b py-1 px-2 w-full ${active_tab() === ActiveTab.Transcribe ? "border-blue-400 text-blue-400" : "hover:bg-gray-50"}`}>Transcribe</button>
+                    <button onClick={() => set_active_tab(ActiveTab.About)} class={`border-b py-1 px-2 w-full ${active_tab() === ActiveTab.About ? "border-blue-400 text-blue-400" : "hover:bg-gray-50"}`}>About</button>
                 </div>
             </div>
-            <Show when={general_config()?.transcript}>
-                <div class="m-2">
-                    <h2 class="text-xl font-bold h-fit">Transcriber Configuration</h2>
-                    <hr class="my-2" />
-                    <div class="flex flex-col gap-1">
-                        <section class="flex items-center gap-2">
-                            <h3 class="text-sm font-bold my-0 h-fit w-32">Model</h3>
-                            <div class="flex flex-col w-full">
-                                <select
-                                    class="border p-1 text-xs w-full"
-                                    onchange={(e) => set_model(parseInt(e.target.value))}
-                                >
-                                    <Suspense>
-                                        <For each={models()!}>
-                                            {(m, i) => (
-                                                <option value={i()} selected={i() === model()}>
-                                                    {m.name}
-                                                </option>
-                                            )}
-                                        </For>
-                                    </Suspense>
-                                </select>
-                                <Suspense>
-                                    <Show
-                                        when={model() !== null && !models()?.[model()!].is_downloaded}
-                                    >
-                                        <Switch>
-                                            <Match when={model_state() === ModelState.Downloading}>
-                                                <button
-                                                    class="border rounded py-2 text-xs"
-                                                    disabled
-                                                >
-                                                    Downloading %{model_download_progress()}
-                                                </button>
-                                            </Match>
-                                            <Match when={model_state() === ModelState.Stopped}>
-                                                <button
-                                                    class="border rounded py-2 cursor-pointer text-xs"
-                                                    onclick={download_selected_model}
-                                                >
-                                                    Download
-                                                </button>
-                                            </Match>
-                                        </Switch>
-                                    </Show>
-                                </Suspense>
-                            </div>
-                        </section>
-                        <section class="flex items-center gap-2">
-                            <h3 class="text-sm font-bold my-0 h-fit w-32">Language</h3>
-                            <select
-                                class="border p-1 text-xs w-full"
-                                onchange={(e) => set_language(e.target.value)}
-                            >
-                                <option value="auto">Auto</option>
-                                <For each={languages}>
-                                    {([display, id]) => <option value={id}>{display}</option>}
-                                </For>
-                            </select>
-                        </section>
-                    </div>
-                </div>
-            </Show>
-            <div class="m-2">
-                <h2 class="text-xl font-bold h-fit">General Configuration</h2>
-                <hr class="my-2" />
-                <div class="flex flex-col gap-1">
-                    <section class="flex items-center gap-2">
-                        <h3 class="text-sm font-bold my-0 h-fit w-52">
-                            Save To
-                        </h3>
-                        <div class="flex flex-col w-full">
-                            <select
-                                class="border p-1 text-xs w-full"
-                                onchange={(e) => update_save_to_path_with(e.target.value)}
-                            >
-                                <Show when={general_config() !== undefined}>
-                                    <For
-                                        each={general_config()!.save_to.save_path_histories}
-                                    >
-                                        {(path) => (
-                                            <option
-                                                value={path}
-                                                selected={general_config()!.save_to.save_path ===
-                                                    path}
-                                            >
-                                                {path}
-                                            </option>
-                                        )}
-                                    </For>
-                                </Show>
-                            </select>
-                            <button
-                                onclick={update_save_to_path}
-                                class="border rounded py-2 cursor-pointer text-xs"
-                            >
-                                Browse
-                            </button>
-                        </div>
-                    </section>
-                    <Show when={general_config()?.transcript}>
-                        <section class="flex items-center gap-2">
-                            <h3 class="text-sm font-bold my-0 h-fit w-52">
-                                Email Transcription To
-                            </h3>
-                            <div class="flex flex-col w-full">
-                                <span class="absolute text-xs ml-1 mb-[-7px] px-2 z-30 bg-white w-fit text-red-800">
-                                </span>
-                                <input
-                                    type="text"
-                                    class="border rounded p-2 text-xs disabled:bg-gray-50 mt-2"
-                                    onchange={(event) => {
-                                        set_transcription_email_to(event.currentTarget.value);
-                                    }}
-                                    placeholder="email@example.com,email2@example.com,other@neighbour.com"
-                                    value={smtp_config()?.host
-                                        ? general_config()?.transcription_email_to
-                                        : "SMTP server is not configured"}
-                                    disabled={!smtp_config()?.host}
-                                />
-                                <button
-                                    onClick={on_email_configuration_click}
-                                    class="border rounded py-2 cursor-pointer text-xs"
-                                >
-                                    Configure
-                                </button>
-                            </div>
-                        </section>
-                    </Show>
-                </div>
-            </div>
-            <div class="w-full h-full flex items-end">
+            <div class="flex flex-col h-full">
                 <Switch>
-                    <Match when={model() !== null && !models()?.[model()!].can_run}>
-                        <button
-                            class="w-full h-full max-h-[3rem] border border-x-transparent font-bold p-2 cursor-default"
-                            disabled
-                        >
-                            You need more ram to run this model ({!models()?.[model()!].mem_usage} MB)
-                        </button>
+                    <Match when={active_tab() === ActiveTab.Recorder}>
+                        <Recorder />
                     </Match>
-                    <Match when={general_config()?.transcript && model() !== null && !models()?.[model()!].is_downloaded}>
-                        <button
-                            class="w-full h-full max-h-[3rem] border border-x-transparent font-bold p-2 cursor-default"
-                            disabled
-                        >
-                            The model hasn't been downloaded
-                        </button>
+                    <Match when={active_tab() === ActiveTab.Transcribe}>
+                        <Transcribe />
                     </Match>
-                    <Match when={recording_state() === RecorderState.Stopped}>
-                        <button
-                            onclick={() => set_popup(ScreenSelector())}
-                            class="w-full h-full max-h-[3rem] border border-x-transparent font-bold p-2 cursor-pointer"
-                        >
-                            Start Recording
-                        </button>
-                    </Match>
-                    <Match when={recording_state() === RecorderState.Paused}>
-                        <button
-                            onclick={recording.resume}
-                            class="w-full h-full max-h-[3rem] border border-x-transparent font-bold p-2 cursor-pointer"
-                        >
-                            Resume Recording
-                        </button>
-                    </Match>
-                    <Match when={recording_state() === RecorderState.Running}>
-                        <button
-                            onclick={recording.stop}
-                            class="w-full h-full max-h-[3rem] border border-x-transparent font-bold p-2 cursor-pointer"
-                        >
-                            Stop Recording
-                        </button>
+                    <Match when={active_tab() === ActiveTab.About}>
+                        <About />
                     </Match>
                 </Switch>
             </div>
-            <a class="mx-auto text-xs text-center my-1 text-blue-500 underline w-fit" target="_blank" href="https://forms.gle/PTs2WGgpidwNeXkLA">Feedback or need support?</a>
         </main>
     );
 }

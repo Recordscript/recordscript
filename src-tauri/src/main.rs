@@ -123,6 +123,28 @@ async fn start_record(selected_device: State<'_, SelectedDevice>, record_channel
 }
 
 #[tauri::command]
+fn start_transcription(window: Window, general_config: State<GeneralConfig>, smtp_config: State<SMTPConfig>, transcriber: State<Arc<Mutex<transcriber::Transcriber>>>, media_path: String) {
+    let Ok(buffer) = std::fs::read(&media_path) else {
+        util::emit_all(&window, "app://notification", serde_json::json!({
+            "type": "error",
+            "value": "Can't read the selected file"
+        }));
+        return;
+    };
+
+    let general_config = general_config.lock().unwrap().clone();
+    let smtp_config = smtp_config.lock().unwrap().clone();
+
+    let output_name = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
+    let transcription_path = general_config.save_to.save_path.join(format!("{output_name}.srt"));
+
+    transcriber.lock().unwrap()
+        .transcribe(&window, buffer, general_config.clone(), smtp_config, transcription_path, false);
+
+    println!("Starting transcription with file \"{}\"", media_path);
+}
+
+#[tauri::command]
 fn pause_record(record_channel: State<RecordChannel>) {
     record_channel.try_send(recorder::RecordCommand::Pause).expect("Can't pause recording");
 }
@@ -252,6 +274,25 @@ fn show_file(path: String) {
     showfile::show_path_in_file_manager(path);
 }
 
+#[derive(Serialize)]
+enum BuildType {
+    Debug,
+    Release,
+}
+
+#[tauri::command]
+fn build_type() -> BuildType {
+    if cfg!(debug_assertions) {
+        return BuildType::Debug;
+    }
+
+    match option_env!("BUILD_TYPE") {
+        Some("debug") => BuildType::Debug,
+        Some("release") => BuildType::Release,
+        _ => BuildType::Debug,
+    }
+}
+
 fn main() {
     std::panic::set_hook(Box::new(|info| {
         let message = info.to_string();
@@ -296,6 +337,7 @@ fn main() {
             stop_record,
             pause_record,
             resume_record,
+            start_transcription,
             list_model,
             download_model,
             select_model,
@@ -312,6 +354,7 @@ fn main() {
             get_smtp_config,
             set_smtp_config,
             show_file,
+            build_type,
         ])
         .setup(move |app| {
             let window = app.get_window("main").expect("Can't get the main window");
@@ -634,7 +677,7 @@ fn main() {
                                 let transcription_path = general_config.save_to.save_path.join(format!("{output_name}.srt"));
 
                                 transcriber.lock().unwrap()
-                                    .transcribe(&window, data, general_config, smtp_config.lock().unwrap().clone(), transcription_path);
+                                    .transcribe(&window, data, general_config, smtp_config.lock().unwrap().clone(), transcription_path, true);
                             }
                         },
                     }
