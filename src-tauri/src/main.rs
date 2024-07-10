@@ -289,7 +289,7 @@ fn build_type() -> BuildType {
     match option_env!("BUILD_TYPE") {
         Some("debug") => BuildType::Debug,
         Some("release") => BuildType::Release,
-        _ => BuildType::Debug,
+        _ => BuildType::Release,
     }
 }
 
