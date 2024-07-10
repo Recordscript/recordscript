@@ -70,6 +70,7 @@ interface GeneralConfig {
     transcript: boolean;
     translate: boolean;
     save_to: SavePathConfig;
+    transcript_save_to: SavePathConfig;
     transcription_email_to: string;
 }
 
@@ -381,6 +382,21 @@ function App() {
         set_general_config(config);
     }
 
+    async function update_transcript_save_to_path_with(path: string) {
+        let config = general_config()!;
+
+        config.transcript_save_to.save_path_histories.push(path);
+
+        config.transcript_save_to.save_path_histories = [
+            ...new Set([
+                ...config.transcript_save_to.save_path_histories,
+            ]),
+        ];
+        config.transcript_save_to.save_path = path;
+
+        set_general_config(config);
+    }
+
     async function update_is_transcript(value: boolean) {
         let config = general_config()!;
 
@@ -409,6 +425,20 @@ function App() {
         if (path === null) return;
 
         update_save_to_path_with(path);
+    }
+
+    async function update_transcript_save_to_path() {
+        let result = await dialog.open({
+            multiple: false,
+            directory: true,
+            title: "Choose new save location",
+        });
+
+        let path = result as string ?? null;
+
+        if (path === null) return;
+
+        update_transcript_save_to_path_with(path);
     }
 
     function push_notification(element: JSX.Element): number {
@@ -702,7 +732,7 @@ function App() {
         )
     }
 
-    function TranscriptionSaveToSection<P extends { title_class?: string; }>(props: P) {
+    function RecorderSaveToSection<P extends { title_class?: string; }>(props: P) {
         return (
             <section class="flex items-center gap-2">
                 <h3 class={`text-sm font-bold my-0 h-fit w-52 ${props.title_class}`}>
@@ -731,6 +761,44 @@ function App() {
                     </select>
                     <button
                         onclick={update_save_to_path}
+                        class="border rounded py-2 cursor-pointer text-xs"
+                    >
+                        Browse
+                    </button>
+                </div>
+            </section>
+        )
+    }
+
+    function TranscriptSaveToSection<P extends { title_class?: string; }>(props: P) {
+        return (
+            <section class="flex items-center gap-2">
+                <h3 class={`text-sm font-bold my-0 h-fit w-52 ${props.title_class}`}>
+                    Save To
+                </h3>
+                <div class="flex flex-col w-full gap-1">
+                    <select
+                        class="border p-1 text-xs w-full"
+                        onchange={(e) => update_transcript_save_to_path_with(e.target.value)}
+                    >
+                        <Show when={general_config() !== undefined}>
+                            <For
+                                each={general_config()!.transcript_save_to.save_path_histories}
+                            >
+                                {(path) => (
+                                    <option
+                                        value={path}
+                                        selected={general_config()!.transcript_save_to.save_path ===
+                                            path}
+                                    >
+                                        {path}
+                                    </option>
+                                )}
+                            </For>
+                        </Show>
+                    </select>
+                    <button
+                        onclick={update_transcript_save_to_path}
                         class="border rounded py-2 cursor-pointer text-xs"
                     >
                         Browse
@@ -831,7 +899,7 @@ function App() {
                     <h2 class="text-xl font-bold h-fit">General Configuration</h2>
                     <hr class="my-2" />
                     <div class="flex flex-col gap-1">
-                        <TranscriptionSaveToSection />
+                        <RecorderSaveToSection />
                         <Show when={general_config()?.transcript}>
                             <section class="flex items-center gap-2">
                                 <h3 class="text-sm font-bold my-0 h-fit w-52">
@@ -958,6 +1026,8 @@ function App() {
 
                 return old;
             });
+
+            await update_transcript_save_to_path_with(util.extract_file_path(path));
         }
 
         return (
@@ -998,7 +1068,7 @@ function App() {
                     </section>
                 <ListModelSection />
                 <ListLanguageSection />
-                <TranscriptionSaveToSection title_class="!w-32" />
+                <TranscriptSaveToSection title_class="!w-32" />
                 <TranscriberTranslateSection />
                 </div>
                 <div class="h-full flex items-end">

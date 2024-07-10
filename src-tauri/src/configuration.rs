@@ -61,6 +61,7 @@ pub struct GeneralConfig {
     pub translate: bool,
     pub transcription_email_to: String,
     pub save_to: SavePathConfig,
+    pub transcript_save_to: SavePathConfig,
 }
 
 impl Default for GeneralConfig {
@@ -74,6 +75,7 @@ impl Default for GeneralConfig {
             translate: false,
             transcription_email_to: String::new(),
             save_to: SavePathConfig::default(),
+            transcript_save_to: SavePathConfig::default(),
         };
 
         save(&this);

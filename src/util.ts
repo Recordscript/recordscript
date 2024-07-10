@@ -73,3 +73,6 @@ export function validate_email_from_header(from: string): boolean {
     return validate_email(email ?? "") && (!name || is_valid_name(name));
 }
 
+export function extract_file_path(path: string) {
+    return path.replace(/[^\\/]*$/, "");
+}
