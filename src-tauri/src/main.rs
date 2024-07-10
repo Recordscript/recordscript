@@ -2,7 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use core::panic;
-use std::{collections::HashMap, fs::File, io::Write, ops::{Deref, DerefMut}, process, sync::{atomic::{self, AtomicBool, AtomicPtr}, Arc, Mutex}, thread, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
+use std::{collections::HashMap, fs::File, io::Write, ops::{Deref, DerefMut}, path::PathBuf, process, str::FromStr, sync::{atomic::{self, AtomicBool, AtomicPtr}, Arc, Mutex}, thread, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
 
 use anyhow::{Context, Result};
 use cpal::{traits::{DeviceTrait, HostTrait, StreamTrait}, Device, Host};
@@ -132,16 +132,27 @@ fn start_transcription(window: Window, general_config: State<GeneralConfig>, smt
         return;
     };
 
+    let media_path = PathBuf::from_str(&media_path).unwrap();
+    let target_name = media_path.file_stem().unwrap();
+
     let general_config = general_config.lock().unwrap().clone();
     let smtp_config = smtp_config.lock().unwrap().clone();
 
-    let output_name = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
-    let transcription_path = general_config.save_to.save_path.join(format!("{output_name}.srt"));
+    let mut transcription_path = general_config.save_to.save_path.join(format!("{}.srt", target_name.to_string_lossy()));
+
+    let mut n = 1;
+    loop {
+        if !transcription_path.exists() { break };
+
+        transcription_path.set_file_name(format!("{} ({n}).srt", target_name.to_string_lossy()));
+
+        n += 1;
+    }
 
     transcriber.lock().unwrap()
-        .transcribe(&window, buffer, general_config.clone(), smtp_config, transcription_path, false);
+        .transcribe(&window, buffer, general_config.clone(), smtp_config, transcription_path.clone(), false);
 
-    println!("Starting transcription with file \"{}\"", media_path);
+    println!("Starting transcription with file \"{}\" to \"{}\"", media_path.display(), transcription_path.display());
 }
 
 #[tauri::command]
