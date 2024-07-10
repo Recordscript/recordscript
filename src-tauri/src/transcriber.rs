@@ -1,4 +1,4 @@
-use std::{path::PathBuf, sync::{Arc, Mutex}};
+use std::{io::{Cursor, Read, Seek, SeekFrom}, path::PathBuf, sync::{Arc, Mutex}};
 
 use anyhow::Context;
 use byte_slice_cast::AsSliceOf;
@@ -180,16 +180,41 @@ impl ModelType {
 fn decode_audio(media_data: Arc<[u8]>) -> anyhow::Result<Vec<f32>> {
     use gst::prelude::*;
 
+    let media_data_len = media_data.len();
+    let media_data = Arc::new(Mutex::new(Cursor::new(media_data)));
+
     let pipeline = 
-        gst::parse::launch("appsrc name=audio-in ! decodebin ! audioconvert ! audio/x-raw,format=F32LE,channels=1 ! audioresample ! audio/x-raw,rate=16000 ! appsink name=pcm-out")?
+        gst::parse::launch(&format!("appsrc name=audio-in stream-type=2 size={media_data_len} ! decodebin ! audioconvert ! audio/x-raw,format=F32LE,channels=1 ! audioresample ! audio/x-raw,rate=16000 ! appsink name=pcm-out sync=false"))?
             .dynamic_cast::<gst::Pipeline>().unwrap();
 
     pipeline.by_name("audio-in").unwrap().dynamic_cast::<gst_app::AppSrc>().unwrap()
         .set_callbacks(gst_app::AppSrcCallbacks::builder()
-            .need_data(move |source, _| {
-                let buffer = gst::Buffer::from_slice(media_data.clone());
-                let _ = source.push_buffer(buffer);
-                source.end_of_stream().unwrap();
+            .need_data({
+                let media_data = media_data.clone();
+
+                move |source, length| {
+                    let mut buffer = vec![0u8; length as _];
+                    let position = media_data.lock().unwrap().position();
+                    let _ = media_data.lock().unwrap().read(&mut buffer).unwrap();
+
+                    if position as usize >= media_data_len {
+                        println!("Ending stream");
+                        source.end_of_stream().unwrap();
+                        return;
+                    }
+
+                    let buffer = gst::Buffer::from_slice(buffer);
+                    let _ = source.push_buffer(buffer);
+                }
+            })
+            .seek_data({
+                let media_data = media_data.clone();
+
+                move |_, location| {
+                    media_data.lock().unwrap().set_position(location);
+
+                    true
+                }
             })
             .build());
 
@@ -199,6 +224,7 @@ fn decode_audio(media_data: Arc<[u8]>) -> anyhow::Result<Vec<f32>> {
         .set_callbacks(gst_app::AppSinkCallbacks::builder()
             .new_sample({
                 let pcm_data = pcm_data.clone();
+
                 move |sink| {
                     let Ok(sample) = sink.pull_sample() else { return Err(gst::FlowError::Error) };
 
