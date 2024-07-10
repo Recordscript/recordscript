@@ -836,7 +836,7 @@ function App() {
                                 class="w-full h-full max-h-[3rem] border border-x-transparent font-bold p-2 cursor-default"
                                 disabled
                             >
-                                The model hasn't been downloaded
+                                Please download the model before you can start
                             </button>
                         </Match>
                         <Match when={recording_state() === RecorderState.Stopped}>
@@ -959,15 +959,34 @@ function App() {
                 <TranscriptionSaveToSection title_class="!w-32" />
                 </div>
                 <div class="h-full flex items-end">
-                    <button
-                        onClick={async () => {
-                            await invoke("start_transcription", { mediaPath: file() });
-                        }}
-                        class="w-full h-full max-h-[3rem] border border-x-transparent font-bold p-2 cursor-pointer disabled:opacity-50 disabled:cursor-default"
-                        disabled={(file() === null) || (general_config()?.transcript && model() !== null && !models()?.[model()!].is_downloaded)}
-                    >
-                        Transcribe
-                    </button>
+                    <Switch fallback={
+                        <button
+                            onClick={async () => {
+                                await invoke("start_transcription", { mediaPath: file() });
+                            }}
+                            class="w-full h-full max-h-[3rem] border border-x-transparent font-bold p-2 cursor-pointer disabled:opacity-50 disabled:cursor-default"
+                            disabled={file() === null}
+                        >
+                            Transcribe
+                        </button>
+                    }>
+                        <Match when={model() !== null && !models()?.[model()!].can_run}>
+                            <button
+                                class="w-full h-full max-h-[3rem] border border-x-transparent font-bold p-2 cursor-pointer disabled:opacity-50 disabled:cursor-default"
+                                disabled
+                            >
+                                You need more ram to run this model ({!models()?.[model()!].mem_usage} MB)
+                            </button>
+                        </Match>
+                        <Match when={model() !== null && !models()?.[model()!].is_downloaded}>
+                            <button
+                                class="w-full h-full max-h-[3rem] border border-x-transparent font-bold p-2 cursor-pointer disabled:opacity-50 disabled:cursor-default"
+                                disabled
+                            >
+                                Please download the model before you can start
+                            </button>
+                        </Match>
+                    </Switch>
                 </div>
             </div>
         )
