@@ -964,7 +964,7 @@ function App() {
                             await invoke("start_transcription", { mediaPath: file() });
                         }}
                         class="w-full h-full max-h-[3rem] border border-x-transparent font-bold p-2 cursor-pointer disabled:opacity-50 disabled:cursor-default"
-                        disabled={file() === null}
+                        disabled={(file() === null) || (general_config()?.transcript && model() !== null && !models()?.[model()!].is_downloaded)}
                     >
                         Transcribe
                     </button>
