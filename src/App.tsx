@@ -14,6 +14,8 @@ import { dialog, invoke } from "@tauri-apps/api";
 import { InvokeArgs } from "@tauri-apps/api/tauri";
 import { appWindow } from "@tauri-apps/api/window";
 
+import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/api/notification";
+
 import * as util from "./util";
 
 import languages from "./lang.json";
@@ -345,6 +347,12 @@ function App() {
     createEffect(() => invoke("select_model", { model: model() }))
     createEffect(() => invoke("select_language", { language: language() }));
 
+    (async () => {
+        if (!await isPermissionGranted()) {
+            await requestPermission();
+        }
+    })();
+
     async function set_general_config(config: GeneralConfig) {
         await invoke("set_general_config", { generalConfig: config });
         update_general_config();
@@ -487,6 +495,21 @@ function App() {
                 );
 
                 break;
+            case "important-link":
+                const important_link_payload: LinkPayload = event.payload.value;
+
+                const im_idx = push_notification(
+                    NotificationInfo({
+                        title: "Important", message: important_link_payload.message, async override_on_click() {
+                            await invoke("show_file", { path: important_link_payload.at });
+                            delete_notification(im_idx);
+                        },
+                    })
+                );
+
+                sendNotification(important_link_payload.message);
+
+                break;
             case "link":
                 const payload: LinkPayload = event.payload.value;
 
@@ -533,7 +556,7 @@ function App() {
                         delete_notification(notification_id);
 
                         await emit("app://notification", {
-                            type: "link",
+                            type: "important-link",
                             value: {
                                 message: `${transciption_uuid}: Transcription is saved at\n${event.payload.value}`,
                                 at: event.payload.value
