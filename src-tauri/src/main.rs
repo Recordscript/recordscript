@@ -138,7 +138,7 @@ fn start_transcription(window: Window, general_config: State<GeneralConfig>, smt
     let general_config = general_config.lock().unwrap().clone();
     let smtp_config = smtp_config.lock().unwrap().clone();
 
-    let mut transcription_path = general_config.save_to.save_path.join(format!("{}.srt", target_name.to_string_lossy()));
+    let mut transcription_path = general_config.transcript_save_to.save_path.join(format!("{}.srt", target_name.to_string_lossy()));
 
     let mut n = 1;
     loop {
