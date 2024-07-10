@@ -58,6 +58,7 @@ impl Default for SavePathConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GeneralConfig {
     pub transcript: bool,
+    pub translate: bool,
     pub transcription_email_to: String,
     pub save_to: SavePathConfig,
 }
@@ -70,6 +71,7 @@ impl Default for GeneralConfig {
 
         let this = Self {
             transcript: false,
+            translate: false,
             transcription_email_to: String::new(),
             save_to: SavePathConfig::default(),
         };

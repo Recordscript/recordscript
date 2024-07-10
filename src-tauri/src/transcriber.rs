@@ -278,6 +278,7 @@ impl Transcriber {
             let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 5 });
 
             params.set_language(Some(&language));
+            params.set_translate(general_config.translate);
 
             // FIXME: TRANSCRIBE-PROGRESS find out why this doesn't work.
             // params.set_progress_callback_safe({

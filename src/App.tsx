@@ -66,6 +66,7 @@ interface SavePathConfig {
 
 interface GeneralConfig {
     transcript: boolean;
+    translate: boolean;
     save_to: SavePathConfig;
     transcription_email_to: string;
 }
@@ -376,6 +377,14 @@ function App() {
         let config = general_config()!;
 
         config.transcript = value;
+
+        set_general_config(config);
+    }
+
+    async function update_is_translate(value: boolean) {
+        let config = general_config()!;
+
+        config.translate = value;
 
         set_general_config(config);
     }
@@ -708,6 +717,15 @@ function App() {
         )
     }
 
+    function TranscriberTranslateSection() {
+        return (
+            <section class="flex items-center gap-2">
+                <h3 class="text-sm font-bold my-0 h-fit w-32">Translate to English</h3>
+                <input type="checkbox" onchange={(e) => update_is_translate(e.target.checked)} checked={general_config()?.translate} />
+            </section>
+        )
+    }
+
     function Recorder() {
         return (
             <div class="flex flex-col gap-3 h-full">
@@ -782,6 +800,7 @@ function App() {
                         <div class="flex flex-col gap-1">
                             <ListModelSection />
                             <ListLanguageSection />
+                            <TranscriberTranslateSection />
                         </div>
                     </div>
                 </Show>
@@ -957,6 +976,7 @@ function App() {
                 <ListModelSection />
                 <ListLanguageSection />
                 <TranscriptionSaveToSection title_class="!w-32" />
+                <TranscriberTranslateSection />
                 </div>
                 <div class="h-full flex items-end">
                     <Switch fallback={
