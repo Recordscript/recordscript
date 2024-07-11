@@ -327,9 +327,7 @@ function App() {
 
     const [model, set_model] = createSignal<string>("SmallWhisper");
     const [model_state, set_model_state] = createSignal(ModelState.Stopped);
-    const [model_download_progress, set_model_download_progress] = createSignal(
-        0,
-    );
+    const [model_download_progress, set_model_download_progress] = createSignal(0);
 
     const [language, set_language] = createSignal("auto");
 
@@ -883,24 +881,6 @@ function App() {
                                 </Suspense>
                             </select>
                         </section>
-                        {/* <section class="flex items-center gap-2"> */}
-                        {/*     <h3 class="text-sm font-bold my-0 h-fit w-32">Screen</h3> */}
-                        {/*     <select */}
-                        {/*         class="border p-1 text-xs w-full" */}
-                        {/*         disabled={screens.loading} */}
-                        {/*         onchange={(e) => set_screen(e.target.value)} */}
-                        {/*     > */}
-                        {/*         <Suspense> */}
-                        {/*             <For each={screens()!}> */}
-                        {/*                 {(device) => ( */}
-                        {/*                     <option value={device.name} selected={device.is_selected}> */}
-                        {/*                         {device.name} */}
-                        {/*                     </option> */}
-                        {/*                 )} */}
-                        {/*             </For> */}
-                        {/*         </Suspense> */}
-                        {/*     </select> */}
-                        {/* </section> */}
                         <section class="flex items-center gap-2">
                             <h3 class="text-sm font-bold my-0 h-fit w-32">Transcript</h3>
                             <input type="checkbox" onchange={(e) => update_is_transcript(e.target.checked)} checked={general_config()?.transcript} />
@@ -998,14 +978,6 @@ function App() {
                         </Match>
                     </Switch>
                 </div>
-                {/* <div class="flex justify-between text-xs m-1"> */}
-                {/*     <a class="text-blue-500 underline w-fit" target="_blank" href="https://forms.gle/PTs2WGgpidwNeXkLA">Feedback or need support?</a> */}
-                {/*     <div class="flex items-center gap-2"> */}
-                {/*         <span>&copy;Recordscript</span> */}
-                {/*         <div class="border-r">&#8203;</div> */}
-                {/*         <a class="text-blue-500 underline w-fit" target="_blank" href="https://forms.gle/PTs2WGgpidwNeXkLA">GitHub</a> */}
-                {/*     </div> */}
-                {/* </div> */}
             </div>
         )
     }
@@ -1063,10 +1035,7 @@ function App() {
                         <div class="flex flex-col w-full gap-1">
                             <select
                                 class="border p-1 text-xs w-full"
-                                onchange={(e) => {
-                                    set_file(e.target.value);
-                                    console.log(file())
-                                }}
+                                onchange={(e) => set_file(e.target.value)}
                             >
                                 <For
                                     each={file_histories()}
