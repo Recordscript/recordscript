@@ -1,8 +1,13 @@
-use std::{sync::{atomic::{self, AtomicPtr}, Arc, Mutex}, time::Duration};
+use std::sync::{Arc, Mutex};
 
-use anyhow::Result;
-use cpal::{traits::{DeviceTrait, HostTrait}, Device, Host};
-use scrap::{Display, TraitCapturer, TraitPixelBuffer};
+use cpal::traits::DeviceTrait as _;
+use cpal::traits::HostTrait as _;
+use cpal::{Device, Host};
+
+use scrap::Display;
+use scrap::TraitCapturer as _;
+use scrap::TraitPixelBuffer as _;
+
 use strum_macros::{EnumIter, IntoStaticStr};
 
 #[derive(Debug, Clone, Copy, Eq, Hash, PartialEq, EnumIter, IntoStaticStr)]
@@ -77,7 +82,7 @@ pub struct DeviceResult {
 }
 
 fn all_hosts() -> Vec<Host> {
-    cpal::ALL_HOSTS.into_iter()
+    cpal::ALL_HOSTS.iter()
         .map(|host_id| cpal::host_from_id(*host_id))
         .filter_map(|host| host.ok())
         .collect()
@@ -125,7 +130,7 @@ impl Screen {
         let data;
         
         loop {
-            let frame = match capturer.frame(Duration::ZERO) {
+            let frame = match capturer.frame(std::time::Duration::ZERO) {
                 Ok(frame) => frame,
                 Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => continue,
                 Err(err) if err.kind() == std::io::ErrorKind::InvalidData => {

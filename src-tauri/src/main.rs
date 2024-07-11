@@ -1,23 +1,31 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use core::panic;
-use std::{fs::File, io::Write, path::PathBuf, str::FromStr, sync::{atomic::{self, AtomicBool, AtomicPtr}, Arc, Mutex}, thread, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
+#![allow(clippy::single_match)]
 
-use anyhow::{Context, Result};
-use cpal::{traits::{DeviceTrait, HostTrait, StreamTrait}, Device, Host};
-use dialog::DialogBox;
-use directories::ProjectDirs;
-use recorder::DeviceEq as _;
-use scrap::{TraitCapturer, TraitPixelBuffer};
-use serde::{Deserialize, Serialize};
-use strum::IntoEnumIterator;
-use tauri::{async_runtime::channel, Manager, State, Window};
-use gst::{glib::uuid_string_random, prelude::*};
+use std::io::Write as _;
+use std::str::FromStr as _;
+use std::{fs::File, path::PathBuf, sync::{atomic, Arc, Mutex}};
 
-use crate::{recorder::DeviceEq, util::{gstreamer_loop, replace_multiple_whitespace}};
+use gst::prelude::*;
 
-pub mod configuration;
+use cpal::traits::DeviceTrait as _;
+use cpal::traits::HostTrait as _;
+use cpal::traits::StreamTrait as _;
+
+use dialog::DialogBox as _;
+
+use scrap::TraitCapturer as _;
+use scrap::TraitPixelBuffer as _;
+
+use strum::IntoEnumIterator as _;
+
+use tauri::Manager as _;
+use tauri::{State, Window};
+
+use crate::recorder::DeviceEq as _;
+
+mod configuration;
 mod recorder;
 mod transcriber;
 mod util;
@@ -60,8 +68,7 @@ fn list_screen(selected_device: State<'_, SelectedDevice>) -> Vec<recorder::Devi
     let default_device = &selected_device.lock().unwrap().screen;
 
     recorder::list_screen().unwrap_or_default().into_iter()
-        .enumerate()
-        .map(|(index, screen)|
+        .map(|screen|
             recorder::DeviceResult {
                 name: screen.name(),
                 is_selected: screen.eq_device(default_device),
@@ -73,8 +80,7 @@ fn list_screen(selected_device: State<'_, SelectedDevice>) -> Vec<recorder::Devi
 #[tauri::command]
 fn select_microphone(selected_device: State<'_, SelectedDevice>, device_name: String) {
     let device = recorder::list_microphone().into_iter()
-        .filter(|device| device.name().unwrap_or_default() == device_name)
-        .next().unwrap();
+        .find(|device| device.name().unwrap_or_default() == device_name).unwrap();
     
     selected_device.lock().unwrap().microphone = Some(device);
 
@@ -84,8 +90,7 @@ fn select_microphone(selected_device: State<'_, SelectedDevice>, device_name: St
 #[tauri::command]
 fn select_speaker(selected_device: State<'_, SelectedDevice>, device_name: String) {
     let device = recorder::list_speaker().into_iter()
-        .filter(|device| device.name().unwrap_or_default() == device_name)
-        .next().unwrap();
+        .find(|device| device.name().unwrap_or_default() == device_name).unwrap();
     
     selected_device.lock().unwrap().speaker = Some(device);
 
@@ -95,8 +100,7 @@ fn select_speaker(selected_device: State<'_, SelectedDevice>, device_name: Strin
 #[tauri::command]
 fn select_screen(selected_device: State<'_, SelectedDevice>, device_name: String) {
     let device = recorder::list_screen().unwrap().into_iter()
-        .filter(|device| device.name() == device_name)
-        .next().unwrap();
+        .find(|device| device.name() == device_name).unwrap();
 
     println!("Switching screen to {device_name:?}");
     
@@ -196,13 +200,13 @@ fn set_smtp_config(config_state: State<'_, SMTPConfig>, config: configuration::S
     *config_state.lock().unwrap() = config;
 }
 
-fn project_directory() -> ProjectDirs {
+fn project_directory() -> directories::ProjectDirs {
     directories::ProjectDirs::from("com.recordscript", "Recordscript", "Recordscript").expect("Cannot use app directory")
 }
 
 #[tauri::command]
 fn download_model(window: Window, model_index: usize) -> String {
-    let channel_name = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos().to_string();
+    let channel_name = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos().to_string();
     
     let model = transcriber::Model::iter().nth(model_index).unwrap();
 
@@ -232,8 +236,6 @@ fn download_model(window: Window, model_index: usize) -> String {
                     "value": format!("{err:?}"),
                 })).unwrap(),
             }
-
-            dbg!(downloaded_size, predicted_size);
 
             window.emit(&channel, serde_json::json!({
                 "type": "progress",
@@ -298,7 +300,7 @@ fn show_file(path: String) {
     showfile::show_path_in_file_manager(path);
 }
 
-#[derive(Serialize)]
+#[derive(serde::Serialize)]
 enum BuildType {
     Debug,
     Release,
@@ -334,7 +336,7 @@ fn main() {
 
     gst_registry.scan_path(std::env::current_exe().unwrap().parent().unwrap());
 
-    let (record_tx, mut record_rx): (RecordChannel, _) = channel(128);
+    let (record_tx, mut record_rx): (RecordChannel, _) = tauri::async_runtime::channel(128);
 
     let transcriber = Arc::new(Mutex::new(transcriber::Transcriber::new(transcriber::Model::SmallWhisper)));
 
@@ -389,11 +391,11 @@ fn main() {
             let smtp_config = smtp_config.clone();
             let transcriber = transcriber.clone();
 
-            thread::spawn(move || {
+            std::thread::spawn(move || {
                 let media_data = Arc::new(Mutex::new(Vec::<u8>::new()));
                 let mut output_name = String::new();
 
-                let mut should_stop: Option<Arc<AtomicBool>> = None;
+                let mut should_stop: Option<Arc<atomic::AtomicBool>> = None;
                 let mut running_pipeline: Option<gst::Pipeline> = None;
         
                 loop {
@@ -401,9 +403,9 @@ fn main() {
 
                     match command {
                         recorder::RecordCommand::Start(selected_device) => {
-                            let recording_duration = Instant::now();
+                            let recording_duration = std::time::Instant::now();
 
-                            should_stop = Some(Arc::new(AtomicBool::new(false)));
+                            should_stop = Some(Arc::new(atomic::AtomicBool::new(false)));
                             
                             let mut pipeline_description = Vec::new();
 
@@ -442,7 +444,7 @@ fn main() {
 
                                                 data.bytes_mut().write_all(&sample).unwrap();
                                             }
-                                        }, |err| { }, None).unwrap();
+                                        }, |_| { }, None).unwrap();
 
                                         audio_streams.push(stream);
 
@@ -484,7 +486,6 @@ fn main() {
 
                                 let stream = device.build_input_stream_raw(&config.into(), sample_format, {
                                     move |data: &cpal::Data, _: &_| {
-                                        // let _ = std::io::stdout().lock();
                                         let _ = audio_rx.send(data.bytes().to_vec());
                                     }
                                 }, |error| panic!("{error}"), None).unwrap();
@@ -501,7 +502,7 @@ fn main() {
                                                 return;
                                             };
     
-                                            let pts = Instant::now() - recording_duration;
+                                            let pts = std::time::Instant::now() - recording_duration;
     
                                             let mut buffer = gst::Buffer::from_slice(sample);
                                             buffer.get_mut().unwrap().set_pts(Some(gst::ClockTime::from_seconds_f64(pts.as_secs_f64())));
@@ -511,7 +512,6 @@ fn main() {
                                             if should_stop.clone().unwrap().load(atomic::Ordering::Acquire) {
                                                 println!("Stopping audio recorder");
                                                 source.end_of_stream().unwrap();
-                                                return;
                                             }
                                         }
                                     })
@@ -531,7 +531,7 @@ fn main() {
                                         height = display.height(),
                                 ));
 
-                                let capturer = Arc::new(AtomicPtr::new(Box::into_raw(Box::new(scrap::Capturer::new(display).unwrap()))));
+                                let capturer = Arc::new(atomic::AtomicPtr::new(Box::into_raw(Box::new(scrap::Capturer::new(display).unwrap()))));
 
                                 let video_input_callbacks = gst_app::AppSrcCallbacks::builder()
                                     .need_data({
@@ -545,7 +545,7 @@ fn main() {
                                                     return;
                                                 }
 
-                                                let frame = match unsafe { &mut *capturer.load(atomic::Ordering::Acquire) }.frame(Duration::ZERO) {
+                                                let frame = match unsafe { &mut *capturer.load(atomic::Ordering::Acquire) }.frame(std::time::Duration::ZERO) {
                                                     Ok(frame) => frame,
                                                     Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => continue,
                                                     Err(err) if err.kind() == std::io::ErrorKind::InvalidData => {
@@ -563,7 +563,7 @@ fn main() {
                                                 break pixel_buffer;
                                             };
 
-                                            let pts = Instant::now() - recording_duration;
+                                            let pts = std::time::Instant::now() - recording_duration;
 
                                             let data = pixel_buffer.data();
                                             let mut buffer = gst::Buffer::from_slice(data.to_vec());
@@ -579,7 +579,7 @@ fn main() {
 
                             pipeline_description.push("mp4mux name=mux faststart=true ! appsink name=output".to_string());
 
-                            println!("Starting pipeline with description: {}", replace_multiple_whitespace(&pipeline_description.join("|")));
+                            println!("Starting pipeline with description: {}", util::replace_multiple_whitespace(&pipeline_description.join("|")));
 
                             let pipeline =
                                 gst::parse::launch(&pipeline_description.join("\n")).unwrap()
@@ -618,9 +618,9 @@ fn main() {
 
                             pipeline.set_state(gst::State::Playing).unwrap();
 
-                            let audio_streams = AtomicPtr::new(Box::into_raw(Box::new(audio_streams)));
+                            let audio_streams = atomic::AtomicPtr::new(Box::into_raw(Box::new(audio_streams)));
 
-                            thread::spawn({
+                            std::thread::spawn({
                                 let pipeline = pipeline.clone();
 
                                 move || {
@@ -630,7 +630,7 @@ fn main() {
                                         stream.play().unwrap();
                                     }
 
-                                    gstreamer_loop(pipeline, |_| { false }).unwrap();
+                                    util::gstreamer_loop(pipeline, |_| { false }).unwrap();
                                
                                     println!("Closing pipeline");
                                 }

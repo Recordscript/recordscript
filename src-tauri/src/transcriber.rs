@@ -1,21 +1,22 @@
-use std::{io::{Cursor, Read, Seek, SeekFrom}, path::PathBuf, sync::{Arc, Mutex}};
+use std::{io::{Cursor, Read}, path::PathBuf, sync::{Arc, Mutex}};
 
-use anyhow::Context;
-use byte_slice_cast::AsSliceOf;
-use directories::ProjectDirs;
-use gst::glib::uuid_string_random;
+use anyhow::Context as _;
+
+use byte_slice_cast::AsSliceOf as _ ;
+
 use serde::{Deserialize, Serialize};
-use strum_macros::EnumIter;
-use tauri::{api::dialog, Window};
-use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 
-use crate::util::{self, gstreamer_loop};
+use strum_macros::EnumIter;
+
+use tauri::Window;
+
+use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 
 pub trait ModelDirectory {
     fn transcriber_model_dir(&self) -> PathBuf;
 }
 
-impl ModelDirectory for ProjectDirs {
+impl ModelDirectory for directories::ProjectDirs {
     fn transcriber_model_dir(&self) -> PathBuf {
         let dir = self.cache_dir().join("model");
         std::fs::create_dir_all(&dir).unwrap();
@@ -373,7 +374,7 @@ fn decode_audio(media_data: Arc<[u8]>) -> anyhow::Result<Vec<f32>> {
             }) 
             .build());
     
-    gstreamer_loop(pipeline, |_| { false })?;
+    crate::util::gstreamer_loop(pipeline, |_| { false })?;
 
     Ok(Mutex::into_inner(Arc::try_unwrap(pcm_data).unwrap()).unwrap())
 }
@@ -414,9 +415,9 @@ impl Transcriber {
 
         println!("Transcribing audio");
 
-        let transcription_uuid = uuid_string_random().to_string();
+        let transcription_uuid = gst::glib::uuid_string_random().to_string();
 
-        util::emit_all(window, "app://transcriber_start", transcription_uuid.clone());
+        crate::util::emit_all(window, "app://transcriber_start", transcription_uuid.clone());
 
         // let mut ctx = self.ctx.lock().unwrap();
         //
@@ -472,8 +473,8 @@ impl Transcriber {
 
                     let fragment = format!(
                         "\n{s}\n{} --> {}\n{}\n",
-                        util::format_timestamp(start, true, ","),
-                        util::format_timestamp(stop, true, ","),
+                        crate::util::format_timestamp(start, true, ","),
+                        crate::util::format_timestamp(stop, true, ","),
                         text.trim().replace("-->", "->")
                     );
 
@@ -490,12 +491,12 @@ impl Transcriber {
             let transcription = match transcription {
                 Ok(transcription) => transcription,
                 Err(err) => {
-                    util::emit_all(&w, "app://notification", serde_json::json!({
+                    crate::util::emit_all(&w, "app://notification", serde_json::json!({
                         "type": "error",
                         "value": format!("Failed transcribing because: {err}, please report this issue!")
                     }));
 
-                    util::emit_all(&w, transcription_uuid, serde_json::json!({
+                    crate::util::emit_all(&w, transcription_uuid, serde_json::json!({
                         "type": "finish_failed",
                         "value": ""
                     }));
@@ -542,7 +543,7 @@ Have a good day!
                 let email = match email {
                     Ok(email) => email,
                     Err(err) => {
-                        util::emit_all(&w, "app://notification", serde_json::json!({
+                        crate::util::emit_all(&w, "app://notification", serde_json::json!({
                             "type": "error",
                             "value": err.to_string()
                         }));
@@ -563,7 +564,7 @@ Have a good day!
                     )?;
 
                 let Ok(mailer) = smtp_config.auto_smtp_transport() else {
-                    util::emit_all(&w, "app://notification", serde_json::json!({
+                    crate::util::emit_all(&w, "app://notification", serde_json::json!({
                         "type": "error",
                         "value": "Unable to connect to the SMTP server using TLS, STARTTLS, or plaintext!"
                     }));
@@ -577,14 +578,14 @@ Have a good day!
                     }
                     Err(e) => {
                         eprintln!("Failed to send email: {e}");
-                        util::emit_all(&w, "app://notification", serde_json::json!({
+                        crate::util::emit_all(&w, "app://notification", serde_json::json!({
                             "type": "error",
                             "value": format!("Failed to send transcription via email because:\n{e}")
                         }));
                     }
                 }
 
-                util::emit_all(&w, "app://notification", serde_json::json!({
+                crate::util::emit_all(&w, "app://notification", serde_json::json!({
                     "type": "info",
                     "value": "Transcription email is sent!"
                 }));
@@ -592,7 +593,7 @@ Have a good day!
                 anyhow::Ok(())
             })();
             
-            util::emit_all(&w, transcription_uuid, serde_json::json!({
+            crate::util::emit_all(&w, transcription_uuid, serde_json::json!({
                 "type": "finish",
                 "value": save_to
             }));

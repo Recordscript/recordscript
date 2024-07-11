@@ -1,5 +1,6 @@
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{path::PathBuf, time::Duration};
+
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 fn config_path<D>() -> PathBuf {
     let config_path = super::project_directory().config_dir().to_path_buf();
