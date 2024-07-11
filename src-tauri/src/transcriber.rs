@@ -36,8 +36,11 @@ pub enum ModelType {
     SmallEnWhisper,
     SmallQuantized,
     SmallEnQuantized,
+    SmallDiarize,
+    MediumWhisper,
     MediumQuantized,
     MediumEnQuantized,
+    LargeWhisper,
     LargeQuantized,
 }
 
@@ -57,8 +60,11 @@ impl ModelType {
             ModelType::SmallEnWhisper => "Small English (Whisper)",
             ModelType::SmallQuantized => "Small (Quantized)",
             ModelType::SmallEnQuantized => "Small English (Quantized)",
+            ModelType::SmallDiarize => "Small (Diarize)",
+            ModelType::MediumWhisper => "Medium (Whisper)",
             ModelType::MediumQuantized => "Medium (Quantized)",
             ModelType::MediumEnQuantized => "Medium English (Quantized)",
+            ModelType::LargeWhisper => "Large (Whisper)",
             ModelType::LargeQuantized => "Large (Quantized)",
         }
     }
@@ -78,8 +84,11 @@ impl ModelType {
             ModelType::SmallEnWhisper => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en.bin?download=true",
             ModelType::SmallQuantized => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small-q5_1.bin?download=true",
             ModelType::SmallEnQuantized => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en-q5_1.bin?download=true",
+            ModelType::SmallDiarize => "https://huggingface.co/akashmjn/tinydiarize-whisper.cpp/resolve/main/ggml-small.en-tdrz.bin?download=true",
+            ModelType::MediumWhisper => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin?download=true",
             ModelType::MediumQuantized => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium-q5_0.bin?download=true",
             ModelType::MediumEnQuantized => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.en-q5_0.bin?download=true",
+            ModelType::LargeWhisper => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin?download=true",
             ModelType::LargeQuantized => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-q5_0.bin?download=true",
         }
     }
@@ -99,15 +108,20 @@ impl ModelType {
             ModelType::SmallEnWhisper => "small-en.bin",
             ModelType::SmallQuantized => "small-q.bin",
             ModelType::SmallEnQuantized => "small-en-q.bin",
+            ModelType::SmallDiarize => "small-diar.bin",
+            ModelType::MediumWhisper => "medium.bin",
             ModelType::MediumQuantized => "medium-q.bin",
             ModelType::MediumEnQuantized => "medium-en.bin",
+            ModelType::LargeWhisper => "large.bin",
             ModelType::LargeQuantized => "large-q.bin",
         }
     }
 
     /// Average memory usage of models in MB
     ///
-    /// Refer to this: https://huggingface.co/ggerganov/whisper.cpp
+    /// Refer to this:
+    /// - https://huggingface.co/ggerganov/whisper.cpp
+    /// - https://huggingface.co/akashmjn/tinydiarize-whisper.cpp 
     pub fn get_avg_mem_usage(&self) -> usize {
         match self {
             ModelType::TinyWhisper => 390,
@@ -122,8 +136,11 @@ impl ModelType {
             ModelType::SmallEnWhisper => 1000,
             ModelType::SmallQuantized => 1000,
             ModelType::SmallEnQuantized => 1000,
+            ModelType::SmallDiarize => 1000,
+            ModelType::MediumWhisper => 2600,
             ModelType::MediumQuantized => 2600,
             ModelType::MediumEnQuantized => 2600,
+            ModelType::LargeWhisper => 4700,
             ModelType::LargeQuantized => 4700,
         }
     }
@@ -144,7 +161,9 @@ impl ModelType {
     ///
     /// Using the non quantized model size, even if we use the quantized model, just in case
     ///
-    /// Refer to this: https://huggingface.co/ggerganov/whisper.cpp
+    /// Refer to this:
+    /// - https://huggingface.co/ggerganov/whisper.cpp
+    /// - https://huggingface.co/akashmjn/tinydiarize-whisper.cpp 
     pub fn get_disk_usage(&self) -> usize {
         match self {
             ModelType::TinyWhisper => 75,
@@ -159,8 +178,11 @@ impl ModelType {
             ModelType::SmallEnWhisper => 466,
             ModelType::SmallQuantized => 466,
             ModelType::SmallEnQuantized => 466,
+            ModelType::SmallDiarize => 466,
+            ModelType::MediumWhisper => 1500,
             ModelType::MediumQuantized => 1500,
             ModelType::MediumEnQuantized => 1500,
+            ModelType::LargeWhisper => 2900,
             ModelType::LargeQuantized => 2900,
         }
     }
@@ -173,6 +195,20 @@ impl ModelType {
         let model_file_path = self.model_path();
         
         model_file_path.exists()
+    }
+
+    pub fn whitelisted_lang(&self) -> Option<Vec<&'static str>> {
+        match self {
+            ModelType::TinyEnWhisper => Some(vec!["en"]),
+            ModelType::TinyEnQuantized => Some(vec!["en"]),
+            ModelType::BaseEnWhisper => Some(vec!["en"]),
+            ModelType::BaseEnQuantized => Some(vec!["en"]),
+            ModelType::SmallEnWhisper => Some(vec!["en"]),
+            ModelType::SmallEnQuantized => Some(vec!["en"]),
+            ModelType::SmallDiarize => Some(vec!["en"]),
+            ModelType::MediumEnQuantized => Some(vec!["en"]),
+            _ => None
+        }
     }
 }
 
@@ -305,6 +341,7 @@ impl Transcriber {
 
             params.set_language(Some(&language));
             params.set_translate(general_config.translate);
+            params.set_tdrz_enable(true);
 
             // FIXME: TRANSCRIBE-PROGRESS find out why this doesn't work.
             // params.set_progress_callback_safe({
@@ -326,9 +363,15 @@ impl Transcriber {
                 let mut fragments = Vec::new();
 
                 for s in 0..state.full_n_segments()? {
-                    let text = state.full_get_segment_text(s)?;
+                    let speaker_turn = state.full_get_segment_speaker_turn_next(s);
+
+                    let mut text = state.full_get_segment_text(s)?;
                     let start = state.full_get_segment_t0(s)?;
                     let stop = state.full_get_segment_t1(s)?;
+
+                    if speaker_turn {
+                        text.push_str(" [SPEAKER TURN]");
+                    }
 
                     let fragment = format!(
                         "\n{s}\n{} --> {}\n{}\n",

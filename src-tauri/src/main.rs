@@ -276,6 +276,7 @@ fn list_model() -> Vec<serde_json::Value> {
                 "disk_usage": model.get_disk_usage(),
                 "is_downloaded": model.is_downloaded(),
                 "can_run": model.can_run(),
+                "whitelisted_lang": model.whitelisted_lang(),
             })
         ).collect()
 }

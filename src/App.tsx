@@ -38,6 +38,7 @@ interface Model {
     mem_usage: number;
     is_downloaded: boolean;
     can_run: boolean;
+    whitelisted_lang: string[] | null;
 }
 
 enum ModelState {
