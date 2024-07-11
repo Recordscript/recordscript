@@ -4,6 +4,7 @@ use anyhow::Context;
 use byte_slice_cast::AsSliceOf;
 use directories::ProjectDirs;
 use gst::glib::uuid_string_random;
+use serde::{Deserialize, Serialize};
 use strum_macros::EnumIter;
 use tauri::{api::dialog, Window};
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
@@ -22,8 +23,38 @@ impl ModelDirectory for ProjectDirs {
     }
 }
 
-#[derive(Debug, EnumIter)]
-pub enum ModelType {
+#[derive(Debug, EnumIter, Serialize)]
+pub enum Category {
+    Recommended,
+    Other,
+}
+
+impl Category {
+    pub fn name(&self) -> &'static str {
+        match self {
+            Category::Recommended => "==== Recommended Models ====",
+            Category::Other => "==== Other Models ====",
+        }
+    }
+}
+
+pub enum Type {
+    Whisper,
+    Quantized,
+}
+
+impl Type {
+    pub fn name(&self) -> &'static str {
+        match self {
+            Type::Whisper => "Whisper",
+            Type::Quantized => "Quantized",
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, EnumIter)]
+pub enum Model {
+    SmallDiarize,
     TinyWhisper,
     TinyEnWhisper,
     TinyQuantized,
@@ -36,7 +67,6 @@ pub enum ModelType {
     SmallEnWhisper,
     SmallQuantized,
     SmallEnQuantized,
-    SmallDiarize,
     MediumWhisper,
     MediumQuantized,
     MediumEnQuantized,
@@ -45,75 +75,75 @@ pub enum ModelType {
 }
 
 // https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny-q5_1.bin?download=true
-impl ModelType {
-    pub fn get_name(&self) -> &'static str {
+impl Model {
+    pub fn name(&self) -> &'static str {
         match self {
-            ModelType::TinyWhisper => "Tiny (Whisper)",
-            ModelType::TinyEnWhisper => "Tiny English (Whisper)",
-            ModelType::TinyQuantized => "Tiny (Quantized)",
-            ModelType::TinyEnQuantized => "Tiny English (Quantized)",
-            ModelType::BaseWhisper => "Base (Whisper)",
-            ModelType::BaseEnWhisper => "Base English (Whisper)",
-            ModelType::BaseQuantized => "Base (Quantized)",
-            ModelType::BaseEnQuantized => "Base English (Quantized)",
-            ModelType::SmallWhisper => "Small (Whisper)",
-            ModelType::SmallEnWhisper => "Small English (Whisper)",
-            ModelType::SmallQuantized => "Small (Quantized)",
-            ModelType::SmallEnQuantized => "Small English (Quantized)",
-            ModelType::SmallDiarize => "Small (Diarize)",
-            ModelType::MediumWhisper => "Medium (Whisper)",
-            ModelType::MediumQuantized => "Medium (Quantized)",
-            ModelType::MediumEnQuantized => "Medium English (Quantized)",
-            ModelType::LargeWhisper => "Large (Whisper)",
-            ModelType::LargeQuantized => "Large (Quantized)",
+            Model::TinyWhisper => "Tiny",
+            Model::TinyEnWhisper => "Tiny English",
+            Model::TinyQuantized => "Tiny",
+            Model::TinyEnQuantized => "Tiny English",
+            Model::BaseWhisper => "Base",
+            Model::BaseEnWhisper => "Base English",
+            Model::BaseQuantized => "Base",
+            Model::BaseEnQuantized => "Base English",
+            Model::SmallWhisper => "Small",
+            Model::SmallEnWhisper => "Small English",
+            Model::SmallQuantized => "Small",
+            Model::SmallEnQuantized => "Small English",
+            Model::SmallDiarize => "Small Diarize",
+            Model::MediumWhisper => "Medium",
+            Model::MediumQuantized => "Medium",
+            Model::MediumEnQuantized => "Medium English",
+            Model::LargeWhisper => "Large",
+            Model::LargeQuantized => "Large",
         }
     }
 
     /// Use [`TranscriberModelType::get_model_file_name`] as the file name when saving to file system
-    pub fn get_model_url(&self) -> &'static str {
+    pub fn download_url(&self) -> &'static str {
         match self {
-            ModelType::TinyWhisper => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin?download=true",
-            ModelType::TinyEnWhisper => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin?download=true",
-            ModelType::TinyQuantized => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny-q5_1.bin?download=true",
-            ModelType::TinyEnQuantized => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en-q5_1.bin?download=true",
-            ModelType::BaseWhisper => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin?download=true",
-            ModelType::BaseEnWhisper => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin?download=true",
-            ModelType::BaseQuantized => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base-q5_1.bin?download=true",
-            ModelType::BaseEnQuantized => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en-q5_1.bin?download=true",
-            ModelType::SmallWhisper => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin?download=true",
-            ModelType::SmallEnWhisper => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en.bin?download=true",
-            ModelType::SmallQuantized => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small-q5_1.bin?download=true",
-            ModelType::SmallEnQuantized => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en-q5_1.bin?download=true",
-            ModelType::SmallDiarize => "https://huggingface.co/akashmjn/tinydiarize-whisper.cpp/resolve/main/ggml-small.en-tdrz.bin?download=true",
-            ModelType::MediumWhisper => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin?download=true",
-            ModelType::MediumQuantized => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium-q5_0.bin?download=true",
-            ModelType::MediumEnQuantized => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.en-q5_0.bin?download=true",
-            ModelType::LargeWhisper => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin?download=true",
-            ModelType::LargeQuantized => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-q5_0.bin?download=true",
+            Model::TinyWhisper => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin?download=true",
+            Model::TinyEnWhisper => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin?download=true",
+            Model::TinyQuantized => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny-q5_1.bin?download=true",
+            Model::TinyEnQuantized => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en-q5_1.bin?download=true",
+            Model::BaseWhisper => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin?download=true",
+            Model::BaseEnWhisper => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin?download=true",
+            Model::BaseQuantized => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base-q5_1.bin?download=true",
+            Model::BaseEnQuantized => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en-q5_1.bin?download=true",
+            Model::SmallWhisper => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin?download=true",
+            Model::SmallEnWhisper => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en.bin?download=true",
+            Model::SmallQuantized => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small-q5_1.bin?download=true",
+            Model::SmallEnQuantized => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en-q5_1.bin?download=true",
+            Model::SmallDiarize => "https://huggingface.co/akashmjn/tinydiarize-whisper.cpp/resolve/main/ggml-small.en-tdrz.bin?download=true",
+            Model::MediumWhisper => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin?download=true",
+            Model::MediumQuantized => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium-q5_0.bin?download=true",
+            Model::MediumEnQuantized => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.en-q5_0.bin?download=true",
+            Model::LargeWhisper => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin?download=true",
+            Model::LargeQuantized => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-q5_0.bin?download=true",
         }
     }
 
     /// Use this file name when saving to file system
-    pub fn get_model_file_name(&self) -> &'static str {
+    pub fn file_name(&self) -> &'static str {
         match self {
-            ModelType::TinyWhisper => "tiny.bin",
-            ModelType::TinyEnWhisper => "tiny-en.bin",
-            ModelType::TinyQuantized => "tiny-q.bin",
-            ModelType::TinyEnQuantized => "tiny-en-q.bin",
-            ModelType::BaseWhisper => "base.bin",
-            ModelType::BaseEnWhisper => "base-en.bin",
-            ModelType::BaseQuantized => "base-q.bin",
-            ModelType::BaseEnQuantized => "base-en-q.bin",
-            ModelType::SmallWhisper => "small.bin",
-            ModelType::SmallEnWhisper => "small-en.bin",
-            ModelType::SmallQuantized => "small-q.bin",
-            ModelType::SmallEnQuantized => "small-en-q.bin",
-            ModelType::SmallDiarize => "small-diar.bin",
-            ModelType::MediumWhisper => "medium.bin",
-            ModelType::MediumQuantized => "medium-q.bin",
-            ModelType::MediumEnQuantized => "medium-en.bin",
-            ModelType::LargeWhisper => "large.bin",
-            ModelType::LargeQuantized => "large-q.bin",
+            Model::TinyWhisper => "tiny.bin",
+            Model::TinyEnWhisper => "tiny-en.bin",
+            Model::TinyQuantized => "tiny-q.bin",
+            Model::TinyEnQuantized => "tiny-en-q.bin",
+            Model::BaseWhisper => "base.bin",
+            Model::BaseEnWhisper => "base-en.bin",
+            Model::BaseQuantized => "base-q.bin",
+            Model::BaseEnQuantized => "base-en-q.bin",
+            Model::SmallWhisper => "small.bin",
+            Model::SmallEnWhisper => "small-en.bin",
+            Model::SmallQuantized => "small-q.bin",
+            Model::SmallEnQuantized => "small-en-q.bin",
+            Model::SmallDiarize => "small-diar.bin",
+            Model::MediumWhisper => "medium.bin",
+            Model::MediumQuantized => "medium-q.bin",
+            Model::MediumEnQuantized => "medium-en.bin",
+            Model::LargeWhisper => "large.bin",
+            Model::LargeQuantized => "large-q.bin",
         }
     }
 
@@ -122,26 +152,26 @@ impl ModelType {
     /// Refer to this:
     /// - https://huggingface.co/ggerganov/whisper.cpp
     /// - https://huggingface.co/akashmjn/tinydiarize-whisper.cpp 
-    pub fn get_avg_mem_usage(&self) -> usize {
+    pub fn average_memory_usage(&self) -> usize {
         match self {
-            ModelType::TinyWhisper => 390,
-            ModelType::TinyEnWhisper => 390,
-            ModelType::TinyQuantized => 390,
-            ModelType::TinyEnQuantized => 390,
-            ModelType::BaseWhisper => 500,
-            ModelType::BaseEnWhisper => 500,
-            ModelType::BaseQuantized => 500,
-            ModelType::BaseEnQuantized => 500,
-            ModelType::SmallWhisper => 1000,
-            ModelType::SmallEnWhisper => 1000,
-            ModelType::SmallQuantized => 1000,
-            ModelType::SmallEnQuantized => 1000,
-            ModelType::SmallDiarize => 1000,
-            ModelType::MediumWhisper => 2600,
-            ModelType::MediumQuantized => 2600,
-            ModelType::MediumEnQuantized => 2600,
-            ModelType::LargeWhisper => 4700,
-            ModelType::LargeQuantized => 4700,
+            Model::TinyWhisper => 390,
+            Model::TinyEnWhisper => 390,
+            Model::TinyQuantized => 390,
+            Model::TinyEnQuantized => 390,
+            Model::BaseWhisper => 500,
+            Model::BaseEnWhisper => 500,
+            Model::BaseQuantized => 500,
+            Model::BaseEnQuantized => 500,
+            Model::SmallWhisper => 1000,
+            Model::SmallEnWhisper => 1000,
+            Model::SmallQuantized => 1000,
+            Model::SmallEnQuantized => 1000,
+            Model::SmallDiarize => 1000,
+            Model::MediumWhisper => 2600,
+            Model::MediumQuantized => 2600,
+            Model::MediumEnQuantized => 2600,
+            Model::LargeWhisper => 4700,
+            Model::LargeQuantized => 4700,
         }
     }
 
@@ -152,62 +182,129 @@ impl ModelType {
         let system_info = System::new_with_specifics(RefreshKind::new().with_memory(MemoryRefreshKind::everything()));
         let available_memory = (system_info.total_memory() + system_info.total_swap()) as usize;
 
-        let model_memory_usage = self.get_avg_mem_usage() * 1000000;
+        let model_memory_usage = self.average_memory_usage() * 1000000;
 
         model_memory_usage < available_memory 
     }
 
     /// Disk usage of models in MB
     ///
-    /// Using the non quantized model size, even if we use the quantized model, just in case
-    ///
     /// Refer to this:
     /// - https://huggingface.co/ggerganov/whisper.cpp
     /// - https://huggingface.co/akashmjn/tinydiarize-whisper.cpp 
-    pub fn get_disk_usage(&self) -> usize {
+    pub fn disk_usage(&self) -> usize {
         match self {
-            ModelType::TinyWhisper => 75,
-            ModelType::TinyEnWhisper => 75,
-            ModelType::TinyQuantized => 75,
-            ModelType::TinyEnQuantized => 75,
-            ModelType::BaseWhisper => 142,
-            ModelType::BaseEnWhisper => 142,
-            ModelType::BaseQuantized => 142,
-            ModelType::BaseEnQuantized => 142,
-            ModelType::SmallWhisper => 466,
-            ModelType::SmallEnWhisper => 466,
-            ModelType::SmallQuantized => 466,
-            ModelType::SmallEnQuantized => 466,
-            ModelType::SmallDiarize => 466,
-            ModelType::MediumWhisper => 1500,
-            ModelType::MediumQuantized => 1500,
-            ModelType::MediumEnQuantized => 1500,
-            ModelType::LargeWhisper => 2900,
-            ModelType::LargeQuantized => 2900,
+            Model::TinyWhisper => 77,
+            Model::TinyEnWhisper => 77,
+            Model::TinyQuantized => 33,
+            Model::TinyEnQuantized => 33,
+            Model::BaseWhisper => 148,
+            Model::BaseEnWhisper => 148,
+            Model::BaseQuantized => 60,
+            Model::BaseEnQuantized => 60,
+            Model::SmallWhisper => 488,
+            Model::SmallEnWhisper => 488,
+            Model::SmallQuantized => 190,
+            Model::SmallEnQuantized => 190,
+            Model::SmallDiarize => 488,
+            Model::MediumWhisper => 1530,
+            Model::MediumQuantized => 539,
+            Model::MediumEnQuantized => 539,
+            Model::LargeWhisper => 3100,
+            Model::LargeQuantized => 1080,
         }
     }
 
-    pub fn model_path(&self) -> PathBuf {
-        crate::project_directory().transcriber_model_dir().join(self.get_model_file_name())
+    pub fn path(&self) -> PathBuf {
+        crate::project_directory().transcriber_model_dir().join(self.file_name())
     }
 
     pub fn is_downloaded(&self) -> bool {
-        let model_file_path = self.model_path();
+        let model_file_path = self.path();
         
         model_file_path.exists()
     }
 
     pub fn whitelisted_lang(&self) -> Option<Vec<&'static str>> {
         match self {
-            ModelType::TinyEnWhisper => Some(vec!["en"]),
-            ModelType::TinyEnQuantized => Some(vec!["en"]),
-            ModelType::BaseEnWhisper => Some(vec!["en"]),
-            ModelType::BaseEnQuantized => Some(vec!["en"]),
-            ModelType::SmallEnWhisper => Some(vec!["en"]),
-            ModelType::SmallEnQuantized => Some(vec!["en"]),
-            ModelType::SmallDiarize => Some(vec!["en"]),
-            ModelType::MediumEnQuantized => Some(vec!["en"]),
+            Model::TinyEnWhisper => Some(vec!["en"]),
+            Model::TinyEnQuantized => Some(vec!["en"]),
+            Model::BaseEnWhisper => Some(vec!["en"]),
+            Model::BaseEnQuantized => Some(vec!["en"]),
+            Model::SmallEnWhisper => Some(vec!["en"]),
+            Model::SmallEnQuantized => Some(vec!["en"]),
+            Model::SmallDiarize => Some(vec!["en"]),
+            Model::MediumEnQuantized => Some(vec!["en"]),
             _ => None
+        }
+    }
+
+    pub fn category(&self) -> Category {
+        match self {
+            Model::TinyWhisper => Category::Recommended,
+            Model::BaseWhisper => Category::Recommended,
+            Model::SmallWhisper => Category::Recommended,
+            Model::MediumWhisper => Category::Recommended,
+            Model::MediumQuantized => Category::Recommended,
+            Model::LargeWhisper => Category::Recommended,
+            Model::LargeQuantized => Category::Recommended,
+            Model::TinyEnWhisper => Category::Other,
+            Model::TinyQuantized => Category::Other,
+            Model::TinyEnQuantized => Category::Other,
+            Model::BaseEnWhisper => Category::Other,
+            Model::BaseQuantized => Category::Other,
+            Model::BaseEnQuantized => Category::Other,
+            Model::SmallEnWhisper => Category::Other,
+            Model::SmallQuantized => Category::Other,
+            Model::SmallEnQuantized => Category::Other,
+            Model::SmallDiarize => Category::Other,
+            Model::MediumEnQuantized => Category::Other,
+        }
+    }
+
+    pub fn description(&self) -> &'static str {
+        match self {
+            Model::TinyWhisper => "Fastest model but with the lowest quality",
+            Model::TinyEnWhisper => "",
+            Model::TinyQuantized => "",
+            Model::TinyEnQuantized => "",
+            Model::BaseWhisper => "Base whisper model",
+            Model::BaseEnWhisper => "",
+            Model::BaseQuantized => "",
+            Model::BaseEnQuantized => "",
+            Model::SmallWhisper => "Default model. Select this for most cases",
+            Model::SmallEnWhisper => "",
+            Model::SmallQuantized => "",
+            Model::SmallEnQuantized => "",
+            Model::SmallDiarize => "Small model that can recognize speaker's turn, only supports English",
+            Model::MediumWhisper => "Better quality than the default small, but might take longer transcribing",
+            Model::MediumQuantized => r#""Lite" version of medium whisper"#,
+            Model::MediumEnQuantized => "",
+            Model::LargeWhisper => "Large v3 model, best quality but with the longest time to transcript",
+            Model::LargeQuantized => r#""Lite" version of Large v3 whisper"#,
+        }
+    }
+
+    pub fn r#type(&self) -> Type {
+        match self {
+            Model::TinyWhisper => Type::Whisper,
+            Model::TinyEnWhisper => Type::Whisper,
+            Model::BaseWhisper => Type::Whisper,
+            Model::BaseEnWhisper => Type::Whisper,
+            Model::MediumWhisper => Type::Whisper,
+            Model::SmallWhisper => Type::Whisper,
+            Model::SmallEnWhisper => Type::Whisper,
+            Model::LargeWhisper => Type::Whisper,
+            Model::TinyQuantized => Type::Quantized,
+            Model::TinyEnQuantized => Type::Quantized,
+            Model::BaseQuantized => Type::Quantized,
+            Model::BaseEnQuantized => Type::Quantized,
+            Model::SmallQuantized => Type::Quantized,
+            Model::SmallEnQuantized => Type::Quantized,
+            Model::SmallDiarize => Type::Quantized,
+            Model::MediumQuantized => Type::Quantized,
+            Model::MediumEnQuantized => Type::Quantized,
+            Model::LargeQuantized => Type::Quantized,
         }
     }
 }
@@ -282,13 +379,13 @@ fn decode_audio(media_data: Arc<[u8]>) -> anyhow::Result<Vec<f32>> {
 }
 
 pub struct Transcriber {
-    model: ModelType,
+    model: Model,
     language: String,
     ctx: Arc<Mutex<Option<WhisperContext>>>,
 }
 
 impl Transcriber {
-    pub fn new(model: ModelType) -> Self {
+    pub fn new(model: Model) -> Self {
         Self {
             model,
             language: "auto".to_owned(),
@@ -296,7 +393,7 @@ impl Transcriber {
         }
     }
 
-    pub fn change_model(&mut self, model: ModelType) {
+    pub fn change_model(&mut self, model: Model) {
         self.model = model;
 
         // Take and drop the old context
@@ -333,7 +430,7 @@ impl Transcriber {
         let language = self.language.clone();
 
         let w = window.clone();
-        let whisper_context = WhisperContext::new_with_params(self.model.model_path().to_str().unwrap(), WhisperContextParameters::default()).unwrap();
+        let whisper_context = WhisperContext::new_with_params(self.model.path().to_str().unwrap(), WhisperContextParameters::default()).unwrap();
         std::thread::spawn(move || {
             let mut state = whisper_context.create_state().unwrap();
 

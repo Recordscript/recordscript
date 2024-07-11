@@ -2,7 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use core::panic;
-use std::{collections::HashMap, fs::File, io::Write, ops::{Deref, DerefMut}, path::PathBuf, process, str::FromStr, sync::{atomic::{self, AtomicBool, AtomicPtr}, Arc, Mutex}, thread, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
+use std::{fs::File, io::Write, path::PathBuf, str::FromStr, sync::{atomic::{self, AtomicBool, AtomicPtr}, Arc, Mutex}, thread, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
 
 use anyhow::{Context, Result};
 use cpal::{traits::{DeviceTrait, HostTrait, StreamTrait}, Device, Host};
@@ -204,16 +204,16 @@ fn project_directory() -> ProjectDirs {
 fn download_model(window: Window, model_index: usize) -> String {
     let channel_name = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos().to_string();
     
-    let model = transcriber::ModelType::iter().nth(model_index).unwrap();
+    let model = transcriber::Model::iter().nth(model_index).unwrap();
 
     let channel = channel_name.clone();
     tauri::async_runtime::spawn(async move {
-        let mut response = reqwest::get(model.get_model_url()).await.unwrap();
+        let mut response = reqwest::get(model.download_url()).await.unwrap();
 
-        let mut file = std::fs::File::create(model.model_path()).unwrap();
+        let mut file = std::fs::File::create(model.path()).unwrap();
 
         let mut downloaded_size = 0;
-        let predicted_size = response.content_length().unwrap_or((model.get_disk_usage() * 1000000) as _);
+        let predicted_size = response.content_length().unwrap_or((model.disk_usage() * 1000000) as _);
         
         while let Some(chunk) = match response.chunk().await {
             Ok(chunk) => chunk,
@@ -258,27 +258,39 @@ fn select_language(transcriber: State<'_, Arc<Mutex<transcriber::Transcriber>>>,
 }
 
 #[tauri::command]
-fn select_model(transcriber: State<'_, Arc<Mutex<transcriber::Transcriber>>>, model: usize) {
-    println!("Switching model to {model}");
-
-    let model = transcriber::ModelType::iter().nth(model).unwrap();
+fn select_model(transcriber: State<'_, Arc<Mutex<transcriber::Transcriber>>>, model: transcriber::Model) {
+    println!("Switching model to {model:?}");
 
     transcriber.lock().unwrap().change_model(model);
 }
 
 #[tauri::command]
 fn list_model() -> Vec<serde_json::Value> {
-    transcriber::ModelType::iter()
+    transcriber::Model::iter()
         .map(|model|
             serde_json::json!({
-                "name": model.get_name(),
-                "mem_usage": model.get_avg_mem_usage(),
-                "disk_usage": model.get_disk_usage(),
+                "type": model,
+                "name": model.name(),
+                "mem_usage": model.average_memory_usage(),
+                "disk_usage": model.disk_usage(),
                 "is_downloaded": model.is_downloaded(),
                 "can_run": model.can_run(),
                 "whitelisted_lang": model.whitelisted_lang(),
+                "category": model.category(),
+                "type_name": model.r#type().name(),
+                "description": model.description(),
             })
         ).collect()
+}
+
+#[tauri::command]
+fn list_model_categories() -> Vec<serde_json::Value> {
+    transcriber::Category::iter()
+        .map(|c| serde_json::json!({
+            "type": c,
+            "name": c.name(),
+        }))
+        .collect()
 }
 
 #[tauri::command]
@@ -324,7 +336,7 @@ fn main() {
 
     let (record_tx, mut record_rx): (RecordChannel, _) = channel(128);
 
-    let transcriber = Arc::new(Mutex::new(transcriber::Transcriber::new(transcriber::ModelType::TinyWhisper)));
+    let transcriber = Arc::new(Mutex::new(transcriber::Transcriber::new(transcriber::Model::SmallWhisper)));
 
     let host = cpal::default_host();
 
@@ -351,6 +363,7 @@ fn main() {
             resume_record,
             start_transcription,
             list_model,
+            list_model_categories,
             download_model,
             select_model,
             select_language,

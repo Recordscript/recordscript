@@ -32,13 +32,22 @@ interface DeviceResult {
     is_selected: boolean;
 }
 
+enum ModelCategory {
+    Recommended = "Recommended",
+    Other = "Other",
+}
+
 interface Model {
+    type: string;
     name: string;
     disk_usage: number;
     mem_usage: number;
     is_downloaded: boolean;
     can_run: boolean;
     whitelisted_lang: string[] | null;
+    category: ModelCategory;
+    type_name: string;
+    description: string;
 }
 
 enum ModelState {
@@ -316,7 +325,7 @@ function App() {
     const [speaker, set_speaker] = createSignal<string | null>(null);
     const [screen, set_screen] = createSignal<string | null>(null);
 
-    const [model, set_model] = createSignal<number>(0);
+    const [model, set_model] = createSignal<string>("SmallWhisper");
     const [model_state, set_model_state] = createSignal(ModelState.Stopped);
     const [model_download_progress, set_model_download_progress] = createSignal(
         0,
@@ -341,6 +350,7 @@ function App() {
     const [transcription_email_to, set_transcription_email_to] = createSignal("");
 
     const [models, { refetch: update_models }] = createInvokeResource<Model[]>("list_model");
+    const [model_categories] = createInvokeResource<{ type: ModelCategory, name: string }[]>("list_model_categories");
 
     createEffect(() => invoke("select_microphone", { deviceName: microphone() }));
     createEffect(() => invoke("select_speaker", { deviceName: speaker() }));
@@ -622,6 +632,7 @@ function App() {
 
                     break;
                 case "done":
+                    set_model_download_progress(0);
                     set_model_state(ModelState.Stopped);
                     update_models();
                     break;
@@ -674,21 +685,27 @@ function App() {
                 <div class="flex flex-col w-full">
                     <select
                         class="border p-1 text-xs w-full"
-                        onchange={(e) => set_model(parseInt(e.target.value))}
+                        onchange={(e) => set_model(e.target.value)}
                     >
                         <Suspense>
-                            <For each={models()!}>
-                                {(m, i) => (
-                                    <option value={i()} selected={i() === model()}>
-                                        {m.name}
-                                    </option>
+                            <For each={model_categories()!}>
+                                {(category) => (
+                                    <optgroup label={category.name}>
+                                        <For each={models()!.filter((m) => m.category === category.type)}>
+                                            {(m) => (
+                                                <option value={m.type} selected={m.type === model()}>
+                                                    {m.name} ({m.type_name}, {util.megabytes_to_jedec_string(m.disk_usage)}) {m.description ? `- ${m.description}` : ""}
+                                                </option>
+                                            )}
+                                        </For>
+                                    </optgroup>
                                 )}
                             </For>
                         </Suspense>
                     </select>
                     <Suspense>
                         <Show
-                            when={model() !== null && !models()?.[model()!].is_downloaded}
+                            when={model() !== null && !models()?.find((m) => m.type === model())?.is_downloaded}
                         >
                             <Switch>
                                 <Match when={model_state() === ModelState.Downloading}>
@@ -719,15 +736,20 @@ function App() {
         return (
             <section class="flex items-center gap-2">
                 <h3 class="text-sm font-bold my-0 h-fit w-32">Language</h3>
-                <select
-                    class="border p-1 text-xs w-full"
-                    onchange={(e) => set_language(e.target.value)}
-                >
-                    <option value="auto">Auto</option>
-                    <For each={languages}>
-                        {([display, id]) => <option value={id}>{display}</option>}
-                    </For>
-                </select>
+                <div class="flex flex-col w-full">
+                    <span class="text-xs ml-1 mb-[-7px] px-2 z-30 bg-white w-fit text-gray-500">
+                        Select the language used for better results than auto-recognition.
+                    </span>
+                    <select
+                        class="border p-1 text-xs w-full"
+                        onchange={(e) => set_language(e.target.value)}
+                    >
+                        <option value="auto">Auto</option>
+                        <For each={languages}>
+                            {([display, id]) => <option value={id}>{display}</option>}
+                        </For>
+                    </select>
+                </div>
             </section>
 
         )
@@ -934,15 +956,15 @@ function App() {
                 </div>
                 <div class="w-full h-full flex items-end">
                     <Switch>
-                        <Match when={model() !== null && !models()?.[model()!].can_run}>
+                        <Match when={model() !== null && !models()?.find((m) => m.type === model())?.can_run}>
                             <button
                                 class="w-full h-full max-h-[3rem] border border-x-transparent font-bold p-2 cursor-default"
                                 disabled
                             >
-                                You need more ram to run this model ({!models()?.[model()!].mem_usage} MB)
+                                You need more ram to run this model ({!models()?.find((m) => m.type === model())?.mem_usage} MB)
                             </button>
                         </Match>
-                        <Match when={general_config()?.transcript && model() !== null && !models()?.[model()!].is_downloaded}>
+                        <Match when={general_config()?.transcript && model() !== null && !models()?.find((m) => m.type === model())?.is_downloaded}>
                             <button
                                 class="w-full h-full max-h-[3rem] border border-x-transparent font-bold p-2 cursor-default"
                                 disabled
@@ -1084,15 +1106,15 @@ function App() {
                             Transcribe
                         </button>
                     }>
-                        <Match when={model() !== null && !models()?.[model()!].can_run}>
+                        <Match when={model() !== null && !models()?.find((m) => m.type === model())?.can_run}>
                             <button
                                 class="w-full h-full max-h-[3rem] border border-x-transparent font-bold p-2 cursor-pointer disabled:opacity-50 disabled:cursor-default"
                                 disabled
                             >
-                                You need more ram to run this model ({!models()?.[model()!].mem_usage} MB)
+                                You need more ram to run this model ({!models()?.find((m) => m.type === model())?.mem_usage} MB)
                             </button>
                         </Match>
-                        <Match when={model() !== null && !models()?.[model()!].is_downloaded}>
+                        <Match when={model() !== null && !models()?.find((m) => m.type === model())?.is_downloaded}>
                             <button
                                 class="w-full h-full max-h-[3rem] border border-x-transparent font-bold p-2 cursor-pointer disabled:opacity-50 disabled:cursor-default"
                                 disabled

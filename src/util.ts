@@ -76,3 +76,18 @@ export function validate_email_from_header(from: string): boolean {
 export function extract_file_path(path: string) {
     return path.replace(/[^\\/]*$/, "");
 }
+
+export function megabytes_to_jedec_string(megabytes: number): string {
+    const units = ["MB", "GB", "TB", "PB", "EB"];
+
+    let size = megabytes;
+    let unit_index = 0;
+
+    while (size >= 1024 && unit_index < units.length - 1) {
+        size /= 1024;
+        unit_index++;
+    }
+
+    return `${size.toFixed(2)} ${units[unit_index]}`;
+}
+
