@@ -735,7 +735,7 @@ function App() {
             <section class="flex items-center gap-2">
                 <h3 class="text-sm font-bold my-0 h-fit w-32">Language</h3>
                 <div class="flex flex-col w-full">
-                    <span class="text-xs ml-1 mb-[-7px] px-2 z-30 bg-white w-fit text-gray-500">
+                    <span class="text-xs ml-1 mb-[-7px] px-2 bg-white w-fit text-gray-500 z-0">
                         Select the language used for better results than auto-recognition.
                     </span>
                     <select
@@ -1127,7 +1127,7 @@ function App() {
                         onClick={() => {
                             set_popup(null);
                         }}
-                        class="fixed flex justify-center items-center w-screen h-screen bg-black bg-opacity-50"
+                        class="fixed flex justify-center items-center w-screen h-screen bg-black bg-opacity-50 z-50"
                     >
                         <div
                             class="bg-white sm:w-2/3 lg:w-1/2 h-fit rounded overflow-y-scroll"
