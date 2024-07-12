@@ -11,10 +11,15 @@ fn config_path<D>() -> PathBuf {
 }
 
 fn document_path() -> PathBuf {
-    let path = directories::UserDirs::new()
-        .unwrap()
+    let user_dirs = directories::UserDirs::new().expect("Can't find user directory");
+    
+    let path = user_dirs
         .document_dir()
-        .unwrap()
+        .unwrap_or_else(|| {
+            eprintln!("Can't find user document directory, falling back to home directory");
+
+            user_dirs.home_dir()
+        })
         .join("Recordscript");
 
     std::fs::create_dir_all(&path).expect("Can't create transcription directory");
