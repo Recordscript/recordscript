@@ -205,10 +205,10 @@ fn project_directory() -> directories::ProjectDirs {
 }
 
 #[tauri::command]
-fn download_model(window: Window, model_index: usize) -> String {
+fn download_model(window: Window, model: transcriber::Model) -> String {
     let channel_name = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos().to_string();
-    
-    let model = transcriber::Model::iter().nth(model_index).unwrap();
+
+    println!("Downloading model {model:?}");
 
     let channel = channel_name.clone();
     tauri::async_runtime::spawn(async move {

@@ -620,7 +620,7 @@ function App() {
         set_model_state(ModelState.Downloading);
 
         const channel_name = await invoke("download_model", {
-            modelIndex: model(),
+            model: model(),
         }) as string;
 
         appWindow.listen<EventResult>(channel_name, (event) => {
