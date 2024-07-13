@@ -882,14 +882,14 @@ function App() {
                             </select>
                         </section>
                         <section class="flex items-center gap-2">
-                            <h3 class="text-sm font-bold my-0 h-fit w-32">Transcript</h3>
+                            <h3 class="text-sm font-bold my-0 h-fit w-32">Subtitle</h3>
                             <input type="checkbox" onchange={(e) => update_is_transcript(e.target.checked)} checked={general_config()?.transcript} />
                         </section>
                     </div>
                 </div>
                 <Show when={general_config()?.transcript}>
                     <div class="m-3">
-                        <h2 class="text-xl font-bold h-fit">Transcriber Configuration</h2>
+                        <h2 class="text-xl font-bold h-fit">Subtitle Configuration</h2>
                         <hr class="my-2" />
                         <div class="flex flex-col gap-1">
                             <ListModelSection />
