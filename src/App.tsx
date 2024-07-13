@@ -1072,7 +1072,7 @@ function App() {
                             class="w-full h-full max-h-[3rem] border border-x-transparent font-bold p-2 cursor-pointer disabled:opacity-50 disabled:cursor-default"
                             disabled={file() === null}
                         >
-                            Transcribe
+                            Generate Subtitle
                         </button>
                     }>
                         <Match when={model() !== null && !models()?.find((m) => m.type === model())?.can_run}>
