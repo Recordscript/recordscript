@@ -1154,8 +1154,8 @@ function App() {
             </div>
             <div class="flex justify-center">
                 <div class="flex text-sm border border-b-transparent overflow-hidden w-full justify-evenly">
-                    <button onClick={() => set_active_tab(ActiveTab.Recorder)} class={`border-b py-1 px-2 w-full ${active_tab() === ActiveTab.Recorder ? "border-blue-400 text-blue-400" : "hover:bg-gray-50"}`}>Recorder</button>
-                    <button onClick={() => set_active_tab(ActiveTab.Transcribe)} class={`border-b py-1 px-2 w-full ${active_tab() === ActiveTab.Transcribe ? "border-blue-400 text-blue-400" : "hover:bg-gray-50"}`}>Transcribe</button>
+                    <button onClick={() => set_active_tab(ActiveTab.Recorder)} class={`border-b py-1 px-2 w-full ${active_tab() === ActiveTab.Recorder ? "border-blue-400 text-blue-400" : "hover:bg-gray-50"}`}>Screen Record</button>
+                    <button onClick={() => set_active_tab(ActiveTab.Transcribe)} class={`border-b py-1 px-2 w-full ${active_tab() === ActiveTab.Transcribe ? "border-blue-400 text-blue-400" : "hover:bg-gray-50"}`}>File Transcription/Subtitling</button>
                     <button onClick={() => set_active_tab(ActiveTab.About)} class={`border-b py-1 px-2 w-full ${active_tab() === ActiveTab.About ? "border-blue-400 text-blue-400" : "hover:bg-gray-50"}`}>About</button>
                 </div>
             </div>
