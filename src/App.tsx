@@ -1112,6 +1112,7 @@ function App() {
                 <div class="flex flex-col gap-2">
                     <a class="border text-sm px-3 py-2 text-center" target="_blank" href={config.smtp_article_url}>Support or Feature Request</a>
                     <a class="border text-sm px-3 py-2 text-center" target="_blank" href={config.github_repository_url}>GitHub</a>
+                    <a class="border text-sm px-3 py-2 text-center" target="_blank" href={config.homepage_url}>Homepage</a>
                 </div>
                 <p class="text-sm font-bold flex items-center">Support us by starring or sponsoring on <img class="h-4 mx-1 object-cover" src={github_mark} /> GitHub!</p>
                 <span class="text-xs">&copy; Recordscript. 2024</span>
