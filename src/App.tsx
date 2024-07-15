@@ -1113,7 +1113,7 @@ function App() {
                     <a class="border text-sm px-3 py-2 text-center" target="_blank" href={config.smtp_article_url}>Support or Feature Request</a>
                     <a class="border text-sm px-3 py-2 text-center" target="_blank" href={config.github_repository_url}>GitHub</a>
                 </div>
-                <p class="text-sm font-bold flex items-center">Support our open-source by sponsoring us on <img class="h-4 mx-1 object-cover" src={github_mark} /> GitHub!</p>
+                <p class="text-sm font-bold flex items-center">Support us by starring or sponsoring on <img class="h-4 mx-1 object-cover" src={github_mark} /> GitHub!</p>
                 <span class="text-xs">&copy; Recordscript. 2024</span>
             </div>
         )
