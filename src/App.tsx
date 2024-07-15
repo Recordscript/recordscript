@@ -157,12 +157,12 @@ function EmailConfigurator<P extends { on_save: () => void }>(props: P) {
                         SMTP Host
                     </h3>
                     <div class="flex flex-col w-full">
-                        <span class="absolute text-xs ml-1 mb-[-7px] px-2 z-30 bg-white w-fit text-red-800">
+                        <span class="text-xs z-30 bg-white w-fit text-red-800">
                             {error.get("host")}
                         </span>
                         <input
                             type="text"
-                            class="border rounded p-2 text-xs disabled:bg-gray-50 mt-2"
+                            class="border rounded p-2 text-xs disabled:bg-gray-50"
                             placeholder="smtp.example.com"
                             value={smtp_config()?.host}
                             onchange={(event) => {
@@ -181,12 +181,12 @@ function EmailConfigurator<P extends { on_save: () => void }>(props: P) {
                         SMTP Port
                     </h3>
                     <div class="flex flex-col w-full">
-                        <span class="absolute text-xs ml-1 mb-[-7px] px-2 z-30 bg-white w-fit text-red-800">
+                        <span class="text-xs z-30 bg-white w-fit text-red-800">
                             {error.get("port")}
                         </span>
                         <input
                             type="text"
-                            class="border rounded p-2 text-xs disabled:bg-gray-50 mt-2"
+                            class="border rounded p-2 text-xs disabled:bg-gray-50"
                             placeholder="465"
                             value={smtp_config()?.port}
                             onchange={(event) => {
@@ -207,12 +207,12 @@ function EmailConfigurator<P extends { on_save: () => void }>(props: P) {
                         SMTP Username
                     </h3>
                     <div class="flex flex-col w-full">
-                        <span class="absolute text-xs ml-1 mb-[-7px] px-2 z-30 bg-white w-fit text-red-800">
+                        <span class="text-xs z-30 bg-white w-fit text-red-800">
                             {error.get("username")}
                         </span>
                         <input
                             type="text"
-                            class="border rounded p-2 text-xs disabled:bg-gray-50 mt-2"
+                            class="border rounded p-2 text-xs disabled:bg-gray-50"
                             placeholder="Username"
                             value={smtp_config()?.username}
                             onchange={(event) => {
@@ -226,12 +226,12 @@ function EmailConfigurator<P extends { on_save: () => void }>(props: P) {
                         SMTP Password
                     </h3>
                     <div class="flex flex-col w-full">
-                        <span class="absolute text-xs ml-1 mb-[-7px] px-2 z-30 bg-white w-fit text-red-800">
+                        <span class="text-xs z-30 bg-white w-fit text-red-800">
                             {error.get("password")}
                         </span>
                         <input
                             type="password"
-                            class="border rounded p-2 text-xs disabled:bg-gray-50 mt-2"
+                            class="border rounded p-2 text-xs disabled:bg-gray-50"
                             placeholder="Password"
                             value={smtp_config()?.password}
                             onchange={(event) => {
@@ -245,12 +245,12 @@ function EmailConfigurator<P extends { on_save: () => void }>(props: P) {
                         From
                     </h3>
                     <div class="flex flex-col w-full">
-                        <span class="absolute text-xs ml-1 mb-[-7px] px-2 z-30 bg-white w-fit text-red-800">
+                        <span class="text-xs z-30 bg-white w-fit text-red-800">
                             {error.get("from")}
                         </span>
                         <input
                             type="text"
-                            class="border rounded p-2 text-xs disabled:bg-gray-50 mt-2"
+                            class="border rounded p-2 text-xs disabled:bg-gray-50"
                             placeholder="someone@example.com"
                             value={smtp_config()?.from}
                             onchange={(event) => {
@@ -735,7 +735,7 @@ function App() {
             <section class="flex items-center gap-2">
                 <h3 class="text-sm font-bold my-0 h-fit w-32">Language</h3>
                 <div class="flex flex-col w-full">
-                    <span class="text-xs ml-1 mb-[-7px] px-2 bg-white w-fit text-gray-500 z-0">
+                    <span class="text-xs bg-white w-fit text-gray-500 z-0">
                         Select the language used for better results than auto-recognition.
                     </span>
                     <select
