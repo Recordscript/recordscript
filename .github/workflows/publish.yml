@@ -15,9 +15,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Set environment variables
-        run: |
-          echo "VCPKG_ROOT=$VCPKG_INSTALLATION_ROOT" >> $GITHUB_ENV
+      - uses: friendlyanon/setup-vcpkg@v1
+        with: { committish: c8696863d371ab7f46e213d8f5ca923c4aef2a00 }
       - name: Install dependencies
         run: |
           sudo apt-get update
@@ -37,7 +36,10 @@ jobs:
         uses: actions/cache@v3
         with:
           key: ${{ runner.OS }}-rust-cache-${{ hashFiles('**/Cargo.toml') }}
-          path: src-tauri/target
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
       - name: Compile application
         run: npm run tauri build
         env:
@@ -75,7 +77,10 @@ jobs:
         uses: actions/cache@v3
         with:
           key: ${{ runner.OS }}-rust-cache-${{ hashFiles('**/Cargo.toml') }}
-          path: src-tauri/target
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
       - name: Compile application
         run: npm run tauri build
         env:
@@ -96,9 +101,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Set environment variables
-        run: |
-          echo "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - uses: friendlyanon/setup-vcpkg@v1
+        with: { committish: c8696863d371ab7f46e213d8f5ca923c4aef2a00 }
       - name: Install dependencies
         run: |
           & "$env:VCPKG_ROOT\vcpkg" install libvpx:x64-windows-static libyuv:x64-windows-static opus:x64-windows-static aom:x64-windows-static
@@ -113,7 +117,10 @@ jobs:
         uses: actions/cache@v3
         with:
           key: ${{ runner.OS }}-rust-cache-${{ hashFiles('**/Cargo.toml') }}
-          path: src-tauri/target
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
       - name: Compile application
         run: npm run tauri build
         env:
