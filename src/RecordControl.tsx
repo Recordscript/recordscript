@@ -18,7 +18,7 @@ export default function() {
 
     return (
         <div class="flex bg-white border rounded justify-center items-center gap-3 w-fit px-3 py-1 text-xs" data-tauri-drag-region>
-            <p class="pointer-events-none">Transcriber is recording</p>
+            <p class="pointer-events-none">Recordscript is recording</p>
             <button onClick={recording.stop} class="border rounded font-bold px-3 py-1 bg-red-400 text-white">Stop recording</button>
         </div>
     )
