@@ -1,7 +1,7 @@
 {
-  "name": "screen-audio-recorder-test",
+  "name": "recordscript",
   "version": "0.0.0",
-  "description": "",
+  "description": "Recordscript lets you generate subtitle either from built-in screen recorder or from video and audio files",
   "type": "module",
   "scripts": {
     "start": "vite",
@@ -10,7 +10,7 @@
     "serve": "vite preview",
     "tauri": "tauri"
   },
-  "license": "MIT",
+  "license": "GPL-3.0-only",
   "dependencies": {
     "@ffmpeg/ffmpeg": "^0.12.10",
     "@ffmpeg/util": "^0.12.1",
