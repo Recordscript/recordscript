@@ -35,23 +35,11 @@ impl Display {
     }
 
     pub fn width(self) -> usize {
-        let w = unsafe { CGDisplayPixelsWide(self.0) };
-        let s = self.scale();
-        if s > 1.0 {
-            ((w as f64) * s).round() as usize
-        } else {
-            w
-        }
+        unsafe { CGDisplayPixelsWide(self.0) }
     }
 
     pub fn height(self) -> usize {
-        let h = unsafe { CGDisplayPixelsHigh(self.0) };
-        let s = self.scale();
-        if s > 1.0 {
-            ((h as f64) * s).round() as usize
-        } else {
-            h
-        }
+        unsafe { CGDisplayPixelsHigh(self.0) }
     }
 
     pub fn is_builtin(self) -> bool {

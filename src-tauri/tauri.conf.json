@@ -79,6 +79,7 @@
         "installMode": "passive",
         "installerArgs": []
       }
-    }
+    },
+    "macOSPrivateApi": true
   }
 }

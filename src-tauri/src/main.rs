@@ -495,6 +495,8 @@ fn main() {
                                 let audio_input_callbacks = gst_app::AppSrcCallbacks::builder()
                                     .need_data({
                                         let should_stop = should_stop.clone();
+                                        println!("Testaa");
+
 
                                         move |source, _| {
                                             let Ok(sample) = audio_tx.recv() else {
