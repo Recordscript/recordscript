@@ -1,7 +1,8 @@
 # Recordscript
 
 Generate subtitle either from built-in screen recorder or from your video/audio files.
-Built with whisper-rs (Rust binding to whisper.cpp), Tauri, Rust.
+
+Works on Windows and Ubuntu. Built with whisper-rs (Rust binding to whisper.cpp), Tauri & Rust.
 
 # Features
 
