@@ -1110,7 +1110,7 @@ function App() {
                     <span class={`text-xs ${build_type() === BuildType.Debug ? "bg-red-500" : "bg-blue-500"} text-white px-4 rounded-lg select-text`}>{build_type()} v{version()}</span>
                 </div>
                 <div class="flex flex-col gap-2">
-                    <a class="border text-sm px-3 py-2 text-center" target="_blank" href={config.smtp_article_url}>Support or Feature Request</a>
+                    <a class="border text-sm px-3 py-2 text-center" target="_blank" href={config.support_url}>Support or Feature Request</a>
                     <a class="border text-sm px-3 py-2 text-center" target="_blank" href={config.github_repository_url}>GitHub</a>
                     <a class="border text-sm px-3 py-2 text-center" target="_blank" href={config.homepage_url}>Homepage</a>
                 </div>
