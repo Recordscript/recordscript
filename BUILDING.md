@@ -5,7 +5,7 @@ For more details see [GitHub workflow](.github/workflows/publish.yml)
 - Install [Rust](https://rustup.rs/)
 - Install [vcpkg](https://learn.microsoft.com/en-us/vcpkg/get_started/get-started) . Make sure you've set VCPKG_ROOT and add the PATH
 - Install both [GStreamer 1.24.5 runtime and development](https://gstreamer.freedesktop.org/download/#windows) and add it to PATH.
-Make sure you've added [GStreamer bin directory to PATH](https://gstreamer.freedesktop.org/documentation/installing/on-windows.html?gi-language=c)
+Make sure you've added [GStreamer bin directory and lib/gstreamer-1.0 and lib/pkgconfig to PATH](https://gstreamer.freedesktop.org/documentation/installing/on-windows.html?gi-language=c)
 - Install [NodeJS](https://nodejs.org/en/download/package-manager) with [NPM](https://docs.npmjs.com/downloading-and-installing-node-js-and-npm)
 
 ## Building
