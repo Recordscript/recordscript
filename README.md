@@ -13,7 +13,7 @@ Works on Windows and Ubuntu. Built with whisper-rs (Rust binding to whisper.cpp)
 
 # Download
 
-Microsoft Store: (link to be added)
+Microsoft Store: https://apps.microsoft.com/detail/9np4vrbxlm9f?hl=en-us&gl=US
 
 You can also take a look at our Release page.
 For now, there's no Mac build yet since there are still some issues.
